@@ -1,5 +1,47 @@
 # Mom's Lifesaver
 ### A companion app for everything you need for your baby
+<!-- website and social media links --> 
+<!-- authors -->
+
+With "Mom's Lifesaver" app, you can keep records of every aspect your baby's growth and track those little things that keep you worried, all in a centralized and private place.
+From weight, sleep or urination tracking to food introduction or vaccination plans, from milestone and motivational notifications to organized memory records, from personal expense tracking and estimation to music and white noise playlists, and much more.
+No more tens of different apps to fulfill different needs, no more messy calendars or lost photos in endless galleries, no more wasted time looking for the best maternal checklist - simply a unified place to get all the insights you need for you and your baby.
+And, when you don't know what to make of something, reach out to one of our partner health experts or try out our AI companion, fully context-aware, fully personalized, fully private and in your control.
+
+## How to Start
+
+(...) under construction.
+
+<!-- 
+
+### Project Prerequisits
+
+### Installation Steps
+
+### Local Deployment and Testing
+
+### Publishing
+
+ -->
+ 
+## Additional Resources
+
+(...) under construction.
+
+<!-- 
+
+### Help Commands
+
+### Project Documentation
+
+### API Specifications
+
+### Other Assets
+(Top-level README companion files, such as LICENSE, CONTRIBUTING, CODE_OF_CONDUCT, AUTHORS, CHANGELOG, and BUGS)
+
+-->
+
+## Feature Draft List
 
 Baby's Record Tracking
 - [ ] (P1) Weight and height tracking
@@ -42,6 +84,7 @@ Data Storage, Export & Backup
 - [ ] (P2) Data and account deletion
 - [ ] (P2) Subscription management
 - [ ] (P3) Data cloud sync
+- [ ] (P3) Account data sharing for families
 
 Revenue Generation
 - [ ] (P1) Non-invasive footer ad bar (free users)
