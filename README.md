@@ -4,9 +4,11 @@
 <!-- authors -->
 
 With "Mom's Lifesaver" app, you can keep records of every aspect your baby's growth and track those little things that keep you worried, all in a centralized and private place.
+
 From weight, sleep or urination tracking to food introduction or vaccination plans, from milestone and motivational notifications to organized memory records, from personal expense tracking and estimation to music and white noise playlists, and much more.
 No more tens of different apps to fulfill different needs, no more messy calendars or lost photos in endless galleries, no more wasted time looking for the best maternal checklist - simply a unified place to get all the insights you need for you and your baby.
-And, when you don't know what to make of something, reach out to one of our partner health experts or try out our AI companion, fully context-aware, fully personalized, fully private and in your control.
+
+And, when you're struggling to figure out what is it that your baby needs, reach out to one of our partner health experts or try out our AI companion, fully context-aware, fully personalized, fully private and in your control.
 
 ## How to Start
 
