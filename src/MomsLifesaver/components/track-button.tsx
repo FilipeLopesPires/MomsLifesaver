@@ -1,32 +1,33 @@
 import { forwardRef, memo } from 'react';
-import { Image, StyleSheet, Text, TouchableOpacity, type TouchableOpacityProps, View } from 'react-native';
+import { Image, StyleSheet, TouchableOpacity, View, type TouchableOpacityProps } from 'react-native';
 
 import type { TrackMetadata } from '@/constants/tracks';
-import { Colors, Typography } from '@/constants/theme';
+import { Colors } from '@/constants/theme';
 
 export type TrackButtonProps = {
   track: TrackMetadata;
-} & TouchableOpacityProps;
+  selected?: boolean;
+  onPress?: (track: TrackMetadata) => void;
+} & Omit<TouchableOpacityProps, 'onPress'>;
 
 const TrackButtonComponent = forwardRef<TouchableOpacity, TrackButtonProps>(
-  ({ track, onPress, style, ...touchableProps }, ref) => {
+  ({ track, onPress, selected = false, style, ...touchableProps }, ref) => {
+    const { onPress: touchableOnPress, ...restTouchableProps } = touchableProps;
+
     return (
       <TouchableOpacity
         ref={ref}
         activeOpacity={0.85}
         onPress={(event) => {
-          touchableProps.onPress?.(event);
+          touchableOnPress?.(event);
           onPress?.(track);
         }}
+        accessibilityState={{ selected }}
         style={[styles.container, style]}
-        {...touchableProps}
+        {...restTouchableProps}
       >
-        <View style={styles.iconBackground}>
-          <Image source={track.iconModule} style={styles.icon} resizeMode="contain" />
-        </View>
-        <Text style={styles.label} numberOfLines={1}>
-          {track.title}
-        </Text>
+        <Image source={track.iconModule} style={styles.icon} resizeMode="cover" />
+        {selected ? <View pointerEvents="none" style={styles.selectionOutline} /> : null}
       </TouchableOpacity>
     );
   },
@@ -39,30 +40,20 @@ export const TrackButton = memo(TrackButtonComponent);
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.surface,
+    aspectRatio: 1,
     borderRadius: 24,
-    padding: 16,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
-  },
-  iconBackground: {
-    width: 72,
-    height: 72,
-    borderRadius: 20,
-    backgroundColor: Colors.surfaceActive,
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: Colors.surface,
+    overflow: 'hidden',
   },
   icon: {
-    width: '70%',
-    height: '70%',
+    width: '100%',
+    height: '100%',
   },
-  label: {
-    ...Typography.label,
-    textAlign: 'center',
+  selectionOutline: {
+    ...StyleSheet.absoluteFillObject,
+    borderWidth: 2,
+    borderRadius: 24,
+    borderColor: Colors.borderActive,
   },
 });
 
