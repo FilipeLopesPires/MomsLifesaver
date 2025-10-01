@@ -48,3 +48,7 @@ Baby Sleeping Tools
 - [ ] (P1) Global and individual volume adjustment
 - [ ] (P1) Smooth system volume adjustment
 - [ ] (P1) Playback timer with smooth fade-out
+- [ ] (P1) Background audio playback
+- [ ] (P2) Persistence of user's last volumes and timer settings 
+- [ ] (P2) Lock screen app controls
+- [ ] (P2) App notifications and top bar controls
