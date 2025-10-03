@@ -5,6 +5,17 @@
 
 (...) under construction.
 
+## Audacity
+
+### Installation
+
+1. Download and install from Windows App Store [here](https://apps.microsoft.com/detail/XP8K0J757HHRDW?hl=en-US&gl=PT&ocid=pdpshare).
+
+### Usage
+
+1. Drag and drop audio track into Audacity, normalize it by selecting the entire track or a portion of it, accessing Effect > Volume and Compression > Normalize set -1.0 dB as target and apply.
+2. Drag and drop audio track into Audacity, remove background noise by first selecting an empty portion of the track, accessing Effect > Noise Removal and Repair > Noise Reduction > Get Noise Profile, then selecting the entire track or a portion of it, accessign Effect > Noise Removal and Repair > Noise Reduction and apply.
+
 ## FFMPEG
 
 ### Installation
