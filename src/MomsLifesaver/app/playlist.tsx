@@ -11,7 +11,7 @@ import { useAudioController } from '@/hooks/use-audio-controller';
 
 export default function PlaylistScreen() {
   const [selectedTrackIds, setSelectedTrackIds] = useState<TrackId[]>([]);
-  const { toggleTrack, setGlobalVolume, globalVolume } = useAudioController();
+  const { toggleTrack, setGlobalVolume, globalVolume, setTrackVolume, tracks } = useAudioController();
 
   const handleTrackPress = useCallback((track: TrackMetadata) => {
     setSelectedTrackIds((previous) => {
@@ -44,6 +44,10 @@ export default function PlaylistScreen() {
         data={TRACK_LIBRARY}
         selectedTrackIds={selectedTrackIds}
         onTrackPress={handleTrackPress}
+        onTrackVolumeChange={(track, value) => setTrackVolume(track.id, value)}
+        volumes={Object.fromEntries(
+          TRACK_LIBRARY.map((track) => [track.id, tracks[track.id]?.volume ?? track.defaultVolume]),
+        )}
         numColumns={3}
         ListHeaderComponent={TrackListHeader}
       />

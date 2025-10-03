@@ -2,7 +2,7 @@ import { memo, useCallback, useMemo } from 'react';
 import { FlatList, StyleSheet, View } from 'react-native';
 
 import type { TrackId, TrackMetadata } from '@/constants/tracks';
-import { TrackButton } from '@/components/track-button';
+import { TrackCard } from '@/components/track-card';
 
 type TrackListHeaderComponent = React.ComponentType | React.ReactElement | null;
 
@@ -11,6 +11,8 @@ export type TrackGridProps = {
   selectedTrackIds: TrackId[];
   numColumns: number;
   onTrackPress: (track: TrackMetadata) => void;
+  onTrackVolumeChange: (track: TrackMetadata, value: number) => void;
+  volumes: Record<TrackId, number>;
   ListHeaderComponent?: TrackListHeaderComponent;
 };
 
@@ -19,6 +21,8 @@ const TrackGridComponent = ({
   selectedTrackIds,
   numColumns,
   onTrackPress,
+  onTrackVolumeChange,
+  volumes,
   ListHeaderComponent,
 }: TrackGridProps) => {
   const paddedData = useMemo(() => {
@@ -40,17 +44,19 @@ const TrackGridComponent = ({
       }
 
       const isSelected = selectedTrackIds.includes(item.id);
+      const volume = volumes[item.id] ?? item.defaultVolume;
 
       return (
-        <TrackButton
+        <TrackCard
           track={item}
-          accessibilityLabel={`${item.title} control`}
+          isSelected={isSelected}
           onPress={onTrackPress}
-          selected={isSelected}
+          onVolumeChange={onTrackVolumeChange}
+          volume={volume}
         />
       );
     },
-    [onTrackPress, selectedTrackIds],
+    [onTrackPress, onTrackVolumeChange, selectedTrackIds, volumes],
   );
 
   return (
