@@ -1,5 +1,5 @@
 import { forwardRef, memo } from 'react';
-import { Image, StyleSheet, TouchableOpacity, View, type TouchableOpacityProps } from 'react-native';
+import { Image, Platform, StyleSheet, TouchableOpacity, View, type TouchableOpacityProps } from 'react-native';
 
 import type { TrackMetadata } from '@/constants/tracks';
 import { Colors } from '@/constants/theme';
@@ -44,6 +44,7 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     backgroundColor: Colors.surface,
     overflow: 'hidden',
+    ...(Platform.OS === 'web' ? { cursor: 'default' } : null),
   },
   icon: {
     width: '100%',

@@ -6,21 +6,27 @@ import { Colors } from '@/constants/theme';
 import { TrackGrid } from '@/components/track-grid';
 import { TrackListHeader } from '@/components/track-list-header';
 import { TrackSelectionBar } from '@/components/track-selection-bar';
+import { useAudioController } from '@/hooks/use-audio-controller';
 
 export default function PlaylistScreen() {
   const [selectedTrackIds, setSelectedTrackIds] = useState<TrackId[]>([]);
+  const { toggleTrack } = useAudioController();
 
   const handleTrackPress = useCallback((track: TrackMetadata) => {
     setSelectedTrackIds((previous) => {
       const isAlreadySelected = previous.includes(track.id);
 
-      if (isAlreadySelected) {
-        return previous.filter((id) => id !== track.id);
-      }
+      const nextSelected = isAlreadySelected
+        ? previous.filter((id) => id !== track.id)
+        : [...previous, track.id];
 
-      return [...previous, track.id];
+      toggleTrack(track.id).catch(() => {
+        // noop for now; could surface an error toast later
+      });
+
+      return nextSelected;
     });
-  }, []);
+  }, [toggleTrack]);
 
   const lastSelectedTrack = useMemo(() => {
     if (selectedTrackIds.length === 0) {

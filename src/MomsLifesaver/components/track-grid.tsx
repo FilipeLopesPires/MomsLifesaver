@@ -1,5 +1,5 @@
-import { memo, useCallback } from 'react';
-import { Platform, FlatList, StyleSheet, View } from 'react-native';
+import { memo, useCallback, useMemo } from 'react';
+import { FlatList, StyleSheet, View } from 'react-native';
 
 import type { TrackId, TrackMetadata } from '@/constants/tracks';
 import { TrackButton } from '@/components/track-button';
@@ -14,40 +14,41 @@ export type TrackGridProps = {
   ListHeaderComponent?: TrackListHeaderComponent;
 };
 
-const TrackGridComponent = ({ 
-  data, 
+const TrackGridComponent = ({
+  data,
   selectedTrackIds,
   numColumns,
   onTrackPress,
   ListHeaderComponent,
- }: TrackGridProps) => {
+}: TrackGridProps) => {
   const paddedData = useMemo(() => {
-    const items = [...data];
+    const items: Array<TrackMetadata | null> = [...data];
     const remainder = items.length % numColumns;
     if (remainder) {
       const fillers = numColumns - remainder;
-      for (let i = 0; i < fillers; i += 1) items.push(null);
+      for (let index = 0; index < fillers; index += 1) {
+        items.push(null);
+      }
     }
     return items;
   }, [data, numColumns]);
 
   const renderItem = useCallback(
     ({ item }: { item: TrackMetadata | null }) => {
-      const isSelected = selectedTrackIds.includes(item?.id);
+      if (!item) {
+        return <View pointerEvents="none" style={styles.placeholder} />;
+      }
 
-      return ( 
-        item ? (
-          <TrackButton 
-            track={item} 
-            style={styles.trackButton} 
-            accessibilityLabel={`${item.title} control`}
-            onPress={onTrackPress}
-            selected={isSelected}
-          />
-        ) : (
-          <View pointerEvents="none" style={[styles.trackButton, styles.placeholder]} />
-        )
-    );
+      const isSelected = selectedTrackIds.includes(item.id);
+
+      return (
+        <TrackButton
+          track={item}
+          accessibilityLabel={`${item.title} control`}
+          onPress={onTrackPress}
+          selected={isSelected}
+        />
+      );
     },
     [onTrackPress, selectedTrackIds],
   );
@@ -79,12 +80,9 @@ const styles = StyleSheet.create({
   columnWrapper: {
     gap: 12,
   },
-  trackButton: {
+  placeholder: {
     flex: 1,
     aspectRatio: 1,
-    ...(Platform.OS === 'web' ? { cursor: 'default' } : null),
-  },
-  placeholder: {
     opacity: 0,
   },
 });
