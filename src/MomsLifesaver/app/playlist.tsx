@@ -37,6 +37,7 @@ export default function PlaylistScreen() {
         data={TRACK_LIBRARY}
         selectedTrackIds={selectedTrackIds}
         onTrackPress={handleTrackPress}
+        numColumns={3}
         ListHeaderComponent={TrackListHeader}
       />
       <TrackSelectionBar lastSelectedTrackTitle={lastSelectedTrack?.title} />

@@ -26,7 +26,7 @@ const TrackButtonComponent = forwardRef<TouchableOpacity, TrackButtonProps>(
         style={[styles.container, style]}
         {...restTouchableProps}
       >
-        <Image source={track.iconModule} style={styles.icon} resizeMode="cover" />
+        <Image source={track.iconModule} style={[styles.icon, styles.iconTint]} resizeMode="cover" />
         {selected ? <View pointerEvents="none" style={styles.selectionOutline} /> : null}
       </TouchableOpacity>
     );
@@ -48,6 +48,9 @@ const styles = StyleSheet.create({
   icon: {
     width: '100%',
     height: '100%',
+  },
+  iconTint: {
+    tintColor: Colors.textPrimary, 
   },
   selectionOutline: {
     ...StyleSheet.absoluteFillObject,
