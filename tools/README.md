@@ -25,8 +25,9 @@
 
 ### Usage
 
-1. Convert .m4a files to .mp3 with the following command: ".\tools\ffmpeg\bin\ffmpeg.exe -i <input.m4a> -codec:a libmp3lame -qscale:a 2 <output.mp3>".
-2. Convert .wav files to .mp3 with the following command: ".\tools\ffmpeg\bin\ffmpeg.exe -i <input.wav> -codec:a libmp3lame -b:a 320k <output.mp3>".
+1. Convert .mp3 files to .m4a (for faster seeks) with the following command: ".\tools\ffmpeg\bin\ffmpeg.exe -i <input.mp3> -c:a aac -b:a 192k <output.m4a>".
+2. Convert .m4a files to .mp3 with the following command: ".\tools\ffmpeg\bin\ffmpeg.exe -i <input.m4a> -codec:a libmp3lame -qscale:a 2 <output.mp3>".
+3. Convert .wav files to .mp3 with the following command: ".\tools\ffmpeg\bin\ffmpeg.exe -i <input.wav> -codec:a libmp3lame -b:a 320k <output.mp3>".
 
 Note: FFMPEG is needed for YT-DLP to properly work.
 

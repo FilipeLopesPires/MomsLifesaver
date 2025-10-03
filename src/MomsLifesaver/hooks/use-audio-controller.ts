@@ -37,6 +37,48 @@ const configureAudioModeAsync = async () => {
   });
 };
 
+const parseStartTime = (value: string): number | null => {
+  const match = value.trim().match(/^([0-9]{1,2}):([0-9]{2})$/);
+  if (!match) {
+    return null;
+  }
+
+  const minutes = Number(match[1]);
+  const seconds = Number(match[2]);
+
+  if (Number.isNaN(minutes) || Number.isNaN(seconds) || seconds >= 60) {
+    return null;
+  }
+
+  return (minutes * 60 + seconds) * 1000;
+};
+
+const computeStartPositionAsync = async (track: LoadedTrack): Promise<number> => {
+  const { startTimes } = track.metadata;
+
+  if (!startTimes || startTimes.length === 0) {
+    return 0;
+  }
+
+  const candidate = startTimes[Math.floor(Math.random() * startTimes.length)];
+  const parsed = parseStartTime(candidate ?? '');
+
+  if (parsed == null) {
+    return 0;
+  }
+
+  const status = await track.sound.getStatusAsync();
+  if (!status.isLoaded || typeof status.durationMillis !== 'number') {
+    return parsed;
+  }
+
+  if (parsed >= status.durationMillis) {
+    return 0;
+  }
+
+  return parsed;
+};
+
 export const useAudioController = () => {
   const [state, setState] = useState<ControllerState>(INITIAL_STATE);
   const mountedRef = useRef(true);
@@ -89,6 +131,12 @@ export const useAudioController = () => {
     const nextIsPlaying = !track.isPlaying;
 
     if (nextIsPlaying) {
+      const startPositionMillis = await computeStartPositionAsync(track);
+      if (startPositionMillis > 0) {
+        await track.sound.setPositionAsync(startPositionMillis);
+      } else {
+        await track.sound.setPositionAsync(0);
+      }
       await track.sound.setVolumeAsync(track.volume * state.globalVolume);
       await track.sound.playAsync();
     } else {

@@ -5,7 +5,7 @@ import WaterfallIcon from '../assets/icons/waterfall.png';
 import HeartIcon from '../assets/icons/heart.png';
 import ShushIcon from '../assets/icons/shush.png';
 
-import KalimbaAudio from '../assets/audio/kalimba.mp3';
+import KalimbaAudio from '../assets/audio/kalimba.m4a';
 import RainAudio from '../assets/audio/rain.mp3';
 import WaterStreamSoftAudio from '../assets/audio/water stream soft.mp3';
 import WaterStreamIntenseAudio from '../assets/audio/water stream intense.mp3';
@@ -34,6 +34,7 @@ export type TrackMetadata = {
    * Recommended starting volume (0-1). All tracks default to 1 for now.
    */
   defaultVolume: number;
+  startTimes: string[];
 };
 
 export const TRACK_LIBRARY: ReadonlyArray<TrackMetadata> = [
@@ -43,13 +44,16 @@ export const TRACK_LIBRARY: ReadonlyArray<TrackMetadata> = [
     audioModule: KalimbaAudio,
     iconModule: KalimbaIcon,
     defaultVolume: 1,
+    startTimes: ["00:22", "01:48", "05:35", "09:11", "11:54", "13:48", "15:38", "17:49", "20:18", "22:30", "24:01", "26:04", "28:06", "31:06", "34:53", "37:02", "39:39", "41:51", "43:20"],
   },
+  
   {
     id: 'rain',
     title: 'Rain',
     audioModule: RainAudio,
     iconModule: RainIcon,
     defaultVolume: 1,
+    startTimes: [],
   },
   {
     id: 'water-stream-soft',
@@ -57,6 +61,7 @@ export const TRACK_LIBRARY: ReadonlyArray<TrackMetadata> = [
     audioModule: WaterStreamSoftAudio,
     iconModule: RiverIcon,
     defaultVolume: 1,
+    startTimes: [],
   },
   {
     id: 'water-stream-intense',
@@ -64,6 +69,7 @@ export const TRACK_LIBRARY: ReadonlyArray<TrackMetadata> = [
     audioModule: WaterStreamIntenseAudio,
     iconModule: WaterfallIcon,
     defaultVolume: 1,
+    startTimes: [],
   },
   {
     id: 'heartbeat',
@@ -71,6 +77,7 @@ export const TRACK_LIBRARY: ReadonlyArray<TrackMetadata> = [
     audioModule: HeartbeatAudio,
     iconModule: HeartIcon,
     defaultVolume: 1,
+    startTimes: [],
   },
   {
     id: 'sh-sh-sh',
@@ -78,6 +85,7 @@ export const TRACK_LIBRARY: ReadonlyArray<TrackMetadata> = [
     audioModule: ShShShAudio,
     iconModule: ShushIcon,
     defaultVolume: 1,
+    startTimes: [],
   },
   {
     id: 'sh-sh-sh-sh-sh',
@@ -85,6 +93,7 @@ export const TRACK_LIBRARY: ReadonlyArray<TrackMetadata> = [
     audioModule: ShShShShShAudio,
     iconModule: ShushIcon,
     defaultVolume: 1,
+    startTimes: [],
   },
 ];
 
