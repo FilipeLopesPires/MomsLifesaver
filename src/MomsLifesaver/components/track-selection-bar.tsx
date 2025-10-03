@@ -27,7 +27,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: Colors.border,
-    gap: 4,
+    gap: 12,
   },
   bottomBarLabel: {
     ...Typography.hint,

@@ -6,11 +6,12 @@ import { Colors } from '@/constants/theme';
 import { TrackGrid } from '@/components/track-grid';
 import { TrackListHeader } from '@/components/track-list-header';
 import { TrackSelectionBar } from '@/components/track-selection-bar';
+import { MasterVolumeSlider } from '@/components/master-volume-slider';
 import { useAudioController } from '@/hooks/use-audio-controller';
 
 export default function PlaylistScreen() {
   const [selectedTrackIds, setSelectedTrackIds] = useState<TrackId[]>([]);
-  const { toggleTrack } = useAudioController();
+  const { toggleTrack, setGlobalVolume, globalVolume } = useAudioController();
 
   const handleTrackPress = useCallback((track: TrackMetadata) => {
     setSelectedTrackIds((previous) => {
@@ -47,6 +48,7 @@ export default function PlaylistScreen() {
         ListHeaderComponent={TrackListHeader}
       />
       <TrackSelectionBar lastSelectedTrackTitle={lastSelectedTrack?.title} />
+      <MasterVolumeSlider value={globalVolume} onChange={setGlobalVolume} />
     </View>
   );
 }
