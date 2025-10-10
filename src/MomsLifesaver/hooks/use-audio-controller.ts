@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform } from 'react-native';
-import { Audio } from 'expo-av';
+import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
 
 import { TRACK_LIBRARY, type TrackId, type TrackMetadata } from '@/constants/tracks';
 
@@ -28,10 +28,10 @@ const configureAudioModeAsync = async () => {
 
   await Audio.setAudioModeAsync({
     allowsRecordingIOS: false,
-    interruptionModeIOS: Audio.INTERRUPTION_MODE_IOS_DO_NOT_MIX,
+    interruptionModeIOS: InterruptionModeIOS.DuckOthers,
     playsInSilentModeIOS: true,
-    shouldDuckAndroid: false,
-    interruptionModeAndroid: Audio.INTERRUPTION_MODE_ANDROID_DO_NOT_MIX,
+    shouldDuckAndroid: true,
+    interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
     playThroughEarpieceAndroid: false,
     staysActiveInBackground: true,
   });
