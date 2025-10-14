@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
 
 import { TRACK_LIBRARY, type TrackId, type TrackMetadata } from '@/constants/tracks';
+import { log, logError } from '@/utils/logger';
 
 type LoadedTrack = {
   metadata: TrackMetadata;
@@ -80,40 +81,40 @@ const computeStartPositionAsync = async (track: LoadedTrack): Promise<number> =>
 };
 
 export const useAudioController = () => {
-  console.log("[MomsLifesaver] useAudioController hook called");
+  log("[MomsLifesaver] useAudioController hook called");
   const [state, setState] = useState<ControllerState>(INITIAL_STATE);
   const mountedRef = useRef(true);
 
   useEffect(() => {
-    console.log("[MomsLifesaver] useAudioController useEffect started");
+    log("[MomsLifesaver] useAudioController useEffect started");
     mountedRef.current = true;
 
     const loadAsync = async () => {
       try {
-        console.log("[MomsLifesaver] loadAsync function started");
+        log("[MomsLifesaver] loadAsync function started");
         await configureAudioModeAsync();
-        console.log("[MomsLifesaver] Audio mode configured successfully");
+        log("[MomsLifesaver] Audio mode configured successfully");
 
         const entries = await Promise.all(
           TRACK_LIBRARY.map(async (track) => {
             try {
-              console.log("[MomsLifesaver] Loading audio for track:", track.id);
+              log("[MomsLifesaver] Loading audio for track:", track.id);
               const { sound } = await Audio.Sound.createAsync(track.audioModule, {
                 volume: track.defaultVolume,
                 isLooping: true,
                 shouldPlay: false,
               });
-              console.log("[MomsLifesaver] Successfully loaded audio for track:", track.id);
+              log("[MomsLifesaver] Successfully loaded audio for track:", track.id);
               return [track.id, {
                 metadata: track,
                 sound,
                 isPlaying: false,
                 volume: track.defaultVolume,
               }] as const;
-            } catch (error) {
-              console.error('Failed to load audio for track:', track.id, error);
-              throw error;
-            }
+              } catch (error) {
+                logError("[MomsLifesaver] Failed to load audio for track:", track.id, error);
+                throw error;
+              }
           }),
         );
 
@@ -122,13 +123,13 @@ export const useAudioController = () => {
           return;
         }
 
-        setState({
-          tracks: Object.fromEntries(entries) as ControllerState['tracks'],
-          globalVolume: 1,
-        });
-        console.log("[MomsLifesaver] All tracks loaded successfully");
+      setState({
+        tracks: Object.fromEntries(entries) as ControllerState['tracks'],
+        globalVolume: 1,
+      });
+      log("[MomsLifesaver] All tracks loaded successfully");
       } catch (error) {
-        console.error("[MomsLifesaver] Error in loadAsync:", error);
+        logError("[MomsLifesaver] Error in loadAsync:", error);
       }
     };
 
@@ -147,7 +148,7 @@ export const useAudioController = () => {
 
     try {
       if (nextIsPlaying) {
-        console.log("[MomsLifesaver] Starting playback for track:", trackId);
+        log("[MomsLifesaver] Starting playback for track:", trackId);
         const startPositionMillis = await computeStartPositionAsync(track);
         if (startPositionMillis > 0) {
           await track.sound.setPositionAsync(startPositionMillis);
@@ -155,16 +156,16 @@ export const useAudioController = () => {
           await track.sound.setPositionAsync(0);
         }
         await track.sound.setVolumeAsync(track.volume * state.globalVolume);
-        console.log("[MomsLifesaver] Playing track:", trackId, "at volume:", track.volume * state.globalVolume);
+        log("[MomsLifesaver] Playing track:", trackId, "at volume:", track.volume * state.globalVolume);
         await track.sound.playAsync();
-        console.log("[MomsLifesaver] Successfully started playback for track:", trackId);
+        log("[MomsLifesaver] Successfully started playback for track:", trackId);
       } else {
-        console.log("[MomsLifesaver] Pausing track:", trackId);
+        log("[MomsLifesaver] Pausing track:", trackId);
         await track.sound.pauseAsync();
-        console.log("[MomsLifesaver] Successfully paused track:", trackId);
+        log("[MomsLifesaver] Successfully paused track:", trackId);
       }
     } catch (error) {
-      console.error('Error in toggleTrack for:', trackId, error);
+      logError("[MomsLifesaver] Error in toggleTrack for:", trackId, error);
     }
 
     setState((previous) => ({

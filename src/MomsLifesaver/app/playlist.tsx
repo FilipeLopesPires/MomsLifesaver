@@ -8,13 +8,14 @@ import { TrackListHeader } from '@/components/track-list-header';
 import { TrackSelectionBar } from '@/components/track-selection-bar';
 import { MasterVolumeSlider } from '@/components/master-volume-slider';
 import { useAudioController } from '@/hooks/use-audio-controller';
+import { log } from '@/utils/logger';
 
 export default function PlaylistScreen() {
-  console.log("[MomsLifesaver] PlaylistScreen component loaded");
+  log("[MomsLifesaver] PlaylistScreen component loaded");
   const [selectedTrackIds, setSelectedTrackIds] = useState<TrackId[]>([]);
-  console.log("[MomsLifesaver] About to call useAudioController");
+  log("[MomsLifesaver] About to call useAudioController");
   const { toggleTrack, setGlobalVolume, globalVolume, setTrackVolume, tracks } = useAudioController();
-  console.log("[MomsLifesaver] useAudioController returned:", { tracksCount: Object.keys(tracks).length });
+  log("[MomsLifesaver] useAudioController returned:", { tracksCount: Object.keys(tracks).length });
 
   const handleTrackPress = useCallback((track: TrackMetadata) => {
     setSelectedTrackIds((previous) => {
