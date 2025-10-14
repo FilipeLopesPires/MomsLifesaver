@@ -101,8 +101,8 @@ const styles = StyleSheet.create({
     borderColor: Colors.borderActive,
   },
   sliderSection: {
-    paddingLeft: 16,
-    paddingRight: 16,
+    paddingLeft: 4,
+    paddingRight: 4,
     gap: 8,
     height: 0,
   },

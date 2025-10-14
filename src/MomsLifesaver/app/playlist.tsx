@@ -20,7 +20,6 @@ export default function PlaylistScreen() {
   
   // Get safe area insets to account for OS UI elements
   const insets = useSafeAreaInsets();
-  log("[MomsLifesaver] Safe area insets:", insets);
 
   const handleTrackPress = useCallback((track: TrackMetadata) => {
     setSelectedTrackIds((previous) => {

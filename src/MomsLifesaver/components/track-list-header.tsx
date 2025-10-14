@@ -6,7 +6,7 @@ import { Colors, Typography } from '@/constants/theme';
 const TrackListHeaderComponent = () => {
   return (
     <View style={styles.headerContainer}>
-      <Text style={styles.headerTitle}>Sleep Sound Mixer</Text>
+      <Text style={styles.headerTitle}>Moms Lifesaver</Text>
       <Text style={styles.headerSubtitle}>Layer calming tracks to build a bedtime atmosphere.</Text>
     </View>
   );
