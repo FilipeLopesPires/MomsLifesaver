@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { TRACK_LIBRARY, TRACK_MAP, type TrackId, type TrackMetadata } from '@/constants/tracks';
 import { Colors } from '@/constants/theme';
@@ -16,6 +17,10 @@ export default function PlaylistScreen() {
   log("[MomsLifesaver] About to call useAudioController");
   const { toggleTrack, setGlobalVolume, globalVolume, setTrackVolume, tracks } = useAudioController();
   log("[MomsLifesaver] useAudioController returned:", { tracksCount: Object.keys(tracks).length });
+  
+  // Get safe area insets to account for OS UI elements
+  const insets = useSafeAreaInsets();
+  log("[MomsLifesaver] Safe area insets:", insets);
 
   const handleTrackPress = useCallback((track: TrackMetadata) => {
     setSelectedTrackIds((previous) => {
@@ -51,12 +56,14 @@ export default function PlaylistScreen() {
         onTrackVolumeChange={(track, value) => setTrackVolume(track.id, value)}
         volumes={Object.fromEntries(
           TRACK_LIBRARY.map((track) => [track.id, tracks[track.id]?.volume ?? track.defaultVolume]),
-        )}
+        ) as Record<TrackId, number>}
         numColumns={3}
         ListHeaderComponent={TrackListHeader}
       />
-      <TrackSelectionBar lastSelectedTrackTitle={lastSelectedTrack?.title} />
-      <MasterVolumeSlider value={globalVolume} onChange={setGlobalVolume} />
+      <View style={[styles.footer, { paddingBottom: insets.bottom }]}>
+        <TrackSelectionBar lastSelectedTrackTitle={lastSelectedTrack?.title} />
+        <MasterVolumeSlider value={globalVolume} onChange={setGlobalVolume} />
+      </View>
     </View>
   );
 }
@@ -65,6 +72,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
+  },
+  footer: {
+    backgroundColor: Colors.surfaceActive,
   },
 });
 
