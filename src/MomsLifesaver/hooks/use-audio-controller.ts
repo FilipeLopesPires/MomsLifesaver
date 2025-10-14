@@ -213,6 +213,142 @@ export const useAudioController = () => {
     );
   }, [state.tracks]);
 
+  const pauseAllTracks = useCallback(async () => {
+    log("[MomsLifesaver] Pausing all tracks");
+    await Promise.all(
+      Object.values(state.tracks).map(async (track) => {
+        if (track?.isPlaying) {
+          try {
+            await track.sound.pauseAsync();
+            log("[MomsLifesaver] Paused track:", track.metadata.id);
+          } catch (error) {
+            logError("[MomsLifesaver] Error pausing track:", track.metadata.id, error);
+          }
+        }
+      }),
+    );
+
+    setState((previous) => ({
+      ...previous,
+      tracks: Object.fromEntries(
+        Object.entries(previous.tracks).map(([id, track]) => [
+          id,
+          track ? { ...track, isPlaying: false } : track,
+        ]),
+      ),
+    }));
+  }, [state.tracks]);
+
+  const playAllTracks = useCallback(async () => {
+    log("[MomsLifesaver] Playing all tracks");
+    await Promise.all(
+      Object.values(state.tracks).map(async (track) => {
+        if (track && !track.isPlaying) {
+          try {
+            const startPositionMillis = await computeStartPositionAsync(track);
+            if (startPositionMillis > 0) {
+              await track.sound.setPositionAsync(startPositionMillis);
+            } else {
+              await track.sound.setPositionAsync(0);
+            }
+            await track.sound.setVolumeAsync(track.volume * state.globalVolume);
+            await track.sound.playAsync();
+            log("[MomsLifesaver] Playing track:", track.metadata.id);
+          } catch (error) {
+            logError("[MomsLifesaver] Error playing track:", track.metadata.id, error);
+          }
+        }
+      }),
+    );
+
+    setState((previous) => ({
+      ...previous,
+      tracks: Object.fromEntries(
+        Object.entries(previous.tracks).map(([id, track]) => [
+          id,
+          track ? { ...track, isPlaying: true } : track,
+        ]),
+      ),
+    }));
+  }, [state.tracks]);
+
+  const pauseSelectedTracks = useCallback(async (trackIds: TrackId[]) => {
+    log("[MomsLifesaver] Pausing selected tracks:", trackIds);
+    await Promise.all(
+      trackIds.map(async (trackId) => {
+        const track = state.tracks[trackId];
+        if (track?.isPlaying) {
+          try {
+            await track.sound.pauseAsync();
+            log("[MomsLifesaver] Paused track:", trackId);
+          } catch (error) {
+            logError("[MomsLifesaver] Error pausing track:", trackId, error);
+          }
+        }
+      }),
+    );
+
+    setState((previous) => ({
+      ...previous,
+      tracks: Object.fromEntries(
+        Object.entries(previous.tracks).map(([id, track]) => [
+          id,
+          track && trackIds.includes(id as TrackId) ? { ...track, isPlaying: false } : track,
+        ]),
+      ),
+    }));
+  }, [state.tracks]);
+
+  const playSelectedTracks = useCallback(async (trackIds: TrackId[]) => {
+    log("[MomsLifesaver] Playing selected tracks:", trackIds);
+    await Promise.all(
+      trackIds.map(async (trackId) => {
+        const track = state.tracks[trackId];
+        if (track && !track.isPlaying) {
+          try {
+            // Only set start position if the track hasn't been played before
+            // Check if track is at position 0 (never played) to determine if we should use start position
+            const status = await track.sound.getStatusAsync();
+            if (status.isLoaded && status.positionMillis === 0) {
+              // Track hasn't been played before, use computed start position
+              const startPositionMillis = await computeStartPositionAsync(track);
+              if (startPositionMillis > 0) {
+                await track.sound.setPositionAsync(startPositionMillis);
+              }
+            }
+            // If track has been played before (positionMillis > 0), don't reset position
+            
+            await track.sound.setVolumeAsync(track.volume * state.globalVolume);
+            await track.sound.playAsync();
+            log("[MomsLifesaver] Playing track:", trackId);
+          } catch (error) {
+            logError("[MomsLifesaver] Error playing track:", trackId, error);
+          }
+        }
+      }),
+    );
+
+    setState((previous) => ({
+      ...previous,
+      tracks: Object.fromEntries(
+        Object.entries(previous.tracks).map(([id, track]) => [
+          id,
+          track && trackIds.includes(id as TrackId) ? { ...track, isPlaying: true } : track,
+        ]),
+      ),
+    }));
+  }, [state.tracks, state.globalVolume]);
+
+  const toggleSelectedTracksPlayPause = useCallback(async (trackIds: TrackId[]) => {
+    const hasPlayingSelectedTracks = trackIds.some(trackId => state.tracks[trackId]?.isPlaying);
+    
+    if (hasPlayingSelectedTracks) {
+      await pauseSelectedTracks(trackIds);
+    } else {
+      await playSelectedTracks(trackIds);
+    }
+  }, [state.tracks, pauseSelectedTracks, playSelectedTracks]);
+
   const teardown = useCallback(async () => {
     await Promise.all(Object.values(state.tracks).map((track) => track?.sound.unloadAsync()));
   }, [state.tracks]);
@@ -240,6 +376,9 @@ export const useAudioController = () => {
     setGlobalVolume,
     toggleTrack,
     setTrackVolume,
+    pauseSelectedTracks,
+    playSelectedTracks,
+    toggleSelectedTracksPlayPause,
     teardown,
   };
 };

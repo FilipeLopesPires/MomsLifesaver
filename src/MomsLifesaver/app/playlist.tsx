@@ -7,6 +7,7 @@ import { Colors } from '@/constants/theme';
 import { TrackGrid } from '@/components/track-grid';
 import { TrackListHeader } from '@/components/track-list-header';
 import { TrackSelectionBar } from '@/components/track-selection-bar';
+import { GlobalPlayPauseBar } from '@/components/global-play-pause-bar';
 import { MasterVolumeSlider } from '@/components/master-volume-slider';
 import { useAudioController } from '@/hooks/use-audio-controller';
 import { log } from '@/utils/logger';
@@ -15,7 +16,7 @@ export default function PlaylistScreen() {
   log("[MomsLifesaver] PlaylistScreen component loaded");
   const [selectedTrackIds, setSelectedTrackIds] = useState<TrackId[]>([]);
   log("[MomsLifesaver] About to call useAudioController");
-  const { toggleTrack, setGlobalVolume, globalVolume, setTrackVolume, tracks } = useAudioController();
+  const { toggleTrack, setGlobalVolume, globalVolume, setTrackVolume, tracks, toggleSelectedTracksPlayPause } = useAudioController();
   log("[MomsLifesaver] useAudioController returned:", { tracksCount: Object.keys(tracks).length });
   
   // Get safe area insets to account for OS UI elements
@@ -46,6 +47,19 @@ export default function PlaylistScreen() {
     return TRACK_MAP[lastId];
   }, [selectedTrackIds]);
 
+  const isAnySelectedTrackPlaying = useMemo(() => {
+    return selectedTrackIds.some(trackId => tracks[trackId]?.isPlaying);
+  }, [selectedTrackIds, tracks]);
+
+  const handleGlobalPlayPause = useCallback(async () => {
+    try {
+      await toggleSelectedTracksPlayPause(selectedTrackIds);
+    } catch (error) {
+      // Handle error if needed
+      log("[MomsLifesaver] Error toggling selected tracks play/pause:", error);
+    }
+  }, [toggleSelectedTracksPlayPause, selectedTrackIds]);
+
   return (
     <View style={styles.container}>
       <TrackGrid
@@ -61,6 +75,11 @@ export default function PlaylistScreen() {
       />
       <View style={[styles.footer, { paddingBottom: insets.bottom }]}>
         <TrackSelectionBar lastSelectedTrackTitle={lastSelectedTrack?.title} />
+        <GlobalPlayPauseBar 
+          isPlaying={isAnySelectedTrackPlaying} 
+          onToggle={handleGlobalPlayPause}
+          selectedTracksCount={selectedTrackIds.length}
+        />
         <MasterVolumeSlider value={globalVolume} onChange={setGlobalVolume} />
       </View>
     </View>
