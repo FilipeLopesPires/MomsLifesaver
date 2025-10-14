@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
 
 import { TRACK_LIBRARY, type TrackId, type TrackMetadata } from '@/constants/tracks';
-import { log, logError } from '@/utils/logger';
+import { log, logWarn, logError } from '@/utils/logger';
 
 type LoadedTrack = {
   metadata: TrackMetadata;
