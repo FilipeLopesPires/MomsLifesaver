@@ -1,16 +1,27 @@
+import Slider from '@react-native-community/slider';
 import { memo } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Typography } from '@/constants/theme';
 
-export type GlobalPlayPauseBarProps = {
+export type PlaybackControlsBarProps = {
+  // Play/Pause controls
   isPlaying: boolean;
   onToggle: () => void;
   selectedTracksCount: number;
+  // Volume controls
+  volume: number;
+  onVolumeChange: (value: number) => void;
 };
 
-const GlobalPlayPauseBarComponent = ({ isPlaying, onToggle, selectedTracksCount }: GlobalPlayPauseBarProps) => {
+const PlaybackControlsBarComponent = ({ 
+  isPlaying, 
+  onToggle, 
+  selectedTracksCount, 
+  volume, 
+  onVolumeChange 
+}: PlaybackControlsBarProps) => {
   const getButtonText = () => {
     if (selectedTracksCount === 0) {
       return 'No tracks selected';
@@ -19,11 +30,13 @@ const GlobalPlayPauseBarComponent = ({ isPlaying, onToggle, selectedTracksCount 
   };
 
   const isDisabled = selectedTracksCount === 0;
+  const volumePercentage = Math.round(volume * 100);
 
   return (
     <View style={styles.container}>
+      {/* Play/Pause Button Section */}
       <TouchableOpacity 
-        style={[styles.button, isDisabled && styles.buttonDisabled]} 
+        style={[styles.playButton, isDisabled && styles.buttonDisabled]} 
         onPress={onToggle} 
         activeOpacity={0.7}
         disabled={isDisabled}
@@ -39,11 +52,29 @@ const GlobalPlayPauseBarComponent = ({ isPlaying, onToggle, selectedTracksCount 
           </Text>
         </View>
       </TouchableOpacity>
+
+      {/* Volume Control Section */}
+      <View style={styles.volumeSection}>
+        <View style={styles.volumeHeader}>
+          <Text style={styles.volumeLabel}>Master volume</Text>
+          <Text style={styles.volumePercentage}>{volumePercentage}%</Text>
+        </View>
+        <Slider
+          value={volume}
+          minimumValue={0}
+          maximumValue={1}
+          step={0.01}
+          onValueChange={onVolumeChange}
+          minimumTrackTintColor={Colors.accent}
+          maximumTrackTintColor={Colors.border}
+          thumbTintColor={Colors.accent}
+        />
+      </View>
     </View>
   );
 };
 
-export const GlobalPlayPauseBar = memo(GlobalPlayPauseBarComponent);
+export const PlaybackControlsBar = memo(PlaybackControlsBarComponent);
 
 const styles = StyleSheet.create({
   container: {
@@ -52,8 +83,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: Colors.border,
+    gap: 16,
   },
-  button: {
+  playButton: {
     backgroundColor: Colors.surface,
     borderRadius: 8,
     paddingVertical: 12,
@@ -78,6 +110,21 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   buttonTextDisabled: {
+    color: Colors.textSecondary,
+  },
+  volumeSection: {
+    gap: 8,
+  },
+  volumeHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  volumeLabel: {
+    ...Typography.hint,
+  },
+  volumePercentage: {
+    ...Typography.hint,
     color: Colors.textSecondary,
   },
 });

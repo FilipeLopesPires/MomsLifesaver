@@ -7,8 +7,7 @@ import { Colors } from '@/constants/theme';
 import { TrackGrid } from '@/components/track-grid';
 import { TrackListHeader } from '@/components/track-list-header';
 import { TrackSelectionBar } from '@/components/track-selection-bar';
-import { GlobalPlayPauseBar } from '@/components/global-play-pause-bar';
-import { MasterVolumeSlider } from '@/components/master-volume-slider';
+import { PlaybackControlsBar } from '@/components/playback-controls-bar';
 import { useAudioController } from '@/hooks/use-audio-controller';
 import { log } from '@/utils/logger';
 
@@ -75,12 +74,13 @@ export default function PlaylistScreen() {
       />
       <View style={[styles.footer, { paddingBottom: insets.bottom }]}>
         <TrackSelectionBar lastSelectedTrackTitle={lastSelectedTrack?.title} />
-        <GlobalPlayPauseBar 
+        <PlaybackControlsBar 
           isPlaying={isAnySelectedTrackPlaying} 
           onToggle={handleGlobalPlayPause}
           selectedTracksCount={selectedTrackIds.length}
+          volume={globalVolume}
+          onVolumeChange={setGlobalVolume}
         />
-        <MasterVolumeSlider value={globalVolume} onChange={setGlobalVolume} />
       </View>
     </View>
   );
