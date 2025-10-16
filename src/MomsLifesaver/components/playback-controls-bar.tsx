@@ -6,6 +6,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography } from '@/constants/theme';
 
 export type PlaybackControlsBarProps = {
+  // Track selection info
+  lastSelectedTrackTitle?: string;
   // Play/Pause controls
   isPlaying: boolean;
   onToggle: () => void;
@@ -16,6 +18,7 @@ export type PlaybackControlsBarProps = {
 };
 
 const PlaybackControlsBarComponent = ({ 
+  lastSelectedTrackTitle,
   isPlaying, 
   onToggle, 
   selectedTracksCount, 
@@ -34,6 +37,14 @@ const PlaybackControlsBarComponent = ({
 
   return (
     <View style={styles.container}>
+      {/* Track Selection Section */}
+      <View style={styles.trackSelectionSection}>
+        <Text style={styles.trackSelectionLabel}>Last selected</Text>
+        <Text style={styles.trackSelectionTitle} numberOfLines={1}>
+          {lastSelectedTrackTitle ?? 'No track selected'}
+        </Text>
+      </View>
+
       {/* Play/Pause Button Section */}
       <TouchableOpacity 
         style={[styles.playButton, isDisabled && styles.buttonDisabled]} 
@@ -84,6 +95,16 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: Colors.border,
     gap: 16,
+  },
+  trackSelectionSection: {
+    gap: 4,
+  },
+  trackSelectionLabel: {
+    ...Typography.hint,
+  },
+  trackSelectionTitle: {
+    ...Typography.label,
+    color: Colors.textPrimary,
   },
   playButton: {
     backgroundColor: Colors.surface,

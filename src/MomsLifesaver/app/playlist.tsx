@@ -6,7 +6,6 @@ import { TRACK_LIBRARY, TRACK_MAP, type TrackId, type TrackMetadata } from '@/co
 import { Colors } from '@/constants/theme';
 import { TrackGrid } from '@/components/track-grid';
 import { TrackListHeader } from '@/components/track-list-header';
-import { TrackSelectionBar } from '@/components/track-selection-bar';
 import { PlaybackControlsBar } from '@/components/playback-controls-bar';
 import { useAudioController } from '@/hooks/use-audio-controller';
 import { log } from '@/utils/logger';
@@ -91,8 +90,8 @@ export default function PlaylistScreen() {
         ListHeaderComponent={TrackListHeader}
       />
       <View style={[styles.footer, { paddingBottom: insets.bottom }]}>
-        <TrackSelectionBar lastSelectedTrackTitle={lastSelectedTrack?.title} />
         <PlaybackControlsBar 
+          lastSelectedTrackTitle={lastSelectedTrack?.title}
           isPlaying={isAnySelectedTrackPlaying} 
           onToggle={handleGlobalPlayPause}
           selectedTracksCount={selectedTrackIds.length}
