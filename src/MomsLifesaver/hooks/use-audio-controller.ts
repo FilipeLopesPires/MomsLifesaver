@@ -9,6 +9,7 @@ type LoadedTrack = {
   metadata: TrackMetadata;
   sound: Audio.Sound;
   isPlaying: boolean;
+  isPaused: boolean;
   volume: number;
 };
 
@@ -109,6 +110,7 @@ export const useAudioController = () => {
                 metadata: track,
                 sound,
                 isPlaying: false,
+                isPaused: false,
                 volume: track.defaultVolume,
               }] as const;
               } catch (error) {
@@ -144,11 +146,53 @@ export const useAudioController = () => {
     const track = state.tracks[trackId];
     if (!track) return null;
 
-    const nextIsPlaying = !track.isPlaying;
+    // Check if all selected tracks are currently paused
+    const allSelectedTracksPaused = Object.values(state.tracks).every(t => 
+      !t || !t.isPlaying || t.isPaused
+    );
 
     try {
-      if (nextIsPlaying) {
-        log("[MomsLifesaver] Starting playback for track:", trackId);
+      if (track.isPlaying && !track.isPaused) {
+        // Track is currently playing - stop it completely
+        log("[MomsLifesaver] Stopping track:", trackId);
+        await track.sound.stopAsync();
+        await track.sound.setPositionAsync(0);
+        
+        setState((previous) => ({
+          ...previous,
+          tracks: {
+            ...previous.tracks,
+            [trackId]: {
+              ...previous.tracks[trackId]!,
+              isPlaying: false,
+              isPaused: false,
+            },
+          },
+        }));
+        
+        return false;
+      } else if (track.isPaused) {
+        // Track is paused - resume it
+        log("[MomsLifesaver] Resuming track:", trackId);
+        await track.sound.setVolumeAsync(track.volume * state.globalVolume);
+        await track.sound.playAsync();
+        
+        setState((previous) => ({
+          ...previous,
+          tracks: {
+            ...previous.tracks,
+            [trackId]: {
+              ...previous.tracks[trackId]!,
+              isPlaying: true,
+              isPaused: false,
+            },
+          },
+        }));
+        
+        return true;
+      } else {
+        // Track is stopped - start it
+        log("[MomsLifesaver] Starting track:", trackId);
         const startPositionMillis = await computeStartPositionAsync(track);
         if (startPositionMillis > 0) {
           await track.sound.setPositionAsync(startPositionMillis);
@@ -156,30 +200,26 @@ export const useAudioController = () => {
           await track.sound.setPositionAsync(0);
         }
         await track.sound.setVolumeAsync(track.volume * state.globalVolume);
-        log("[MomsLifesaver] Playing track:", trackId, "at volume:", track.volume * state.globalVolume);
         await track.sound.playAsync();
-        log("[MomsLifesaver] Successfully started playback for track:", trackId);
-      } else {
-        log("[MomsLifesaver] Pausing track:", trackId);
-        await track.sound.pauseAsync();
-        log("[MomsLifesaver] Successfully paused track:", trackId);
+        
+        setState((previous) => ({
+          ...previous,
+          tracks: {
+            ...previous.tracks,
+            [trackId]: {
+              ...previous.tracks[trackId]!,
+              isPlaying: true,
+              isPaused: false,
+            },
+          },
+        }));
+        
+        return true;
       }
     } catch (error) {
       logError("[MomsLifesaver] Error in toggleTrack for:", trackId, error);
+      return track.isPlaying;
     }
-
-    setState((previous) => ({
-      ...previous,
-      tracks: {
-        ...previous.tracks,
-        [trackId]: {
-          ...previous.tracks[trackId]!,
-          isPlaying: nextIsPlaying,
-        },
-      },
-    }));
-
-    return nextIsPlaying;
   }, [state.globalVolume, state.tracks]);
 
   const setTrackVolume = useCallback(async (trackId: TrackId, volume: number) => {
@@ -233,7 +273,7 @@ export const useAudioController = () => {
       tracks: Object.fromEntries(
         Object.entries(previous.tracks).map(([id, track]) => [
           id,
-          track ? { ...track, isPlaying: false } : track,
+          track ? { ...track, isPlaying: false, isPaused: true } : track,
         ]),
       ),
     }));
@@ -243,17 +283,25 @@ export const useAudioController = () => {
     log("[MomsLifesaver] Playing all tracks");
     await Promise.all(
       Object.values(state.tracks).map(async (track) => {
-        if (track && !track.isPlaying) {
+        if (track && (!track.isPlaying || track.isPaused)) {
           try {
-            const startPositionMillis = await computeStartPositionAsync(track);
-            if (startPositionMillis > 0) {
-              await track.sound.setPositionAsync(startPositionMillis);
+            if (track.isPaused) {
+              // Resume paused track
+              await track.sound.setVolumeAsync(track.volume * state.globalVolume);
+              await track.sound.playAsync();
+              log("[MomsLifesaver] Resuming track:", track.metadata.id);
             } else {
-              await track.sound.setPositionAsync(0);
+              // Start stopped track
+              const startPositionMillis = await computeStartPositionAsync(track);
+              if (startPositionMillis > 0) {
+                await track.sound.setPositionAsync(startPositionMillis);
+              } else {
+                await track.sound.setPositionAsync(0);
+              }
+              await track.sound.setVolumeAsync(track.volume * state.globalVolume);
+              await track.sound.playAsync();
+              log("[MomsLifesaver] Playing track:", track.metadata.id);
             }
-            await track.sound.setVolumeAsync(track.volume * state.globalVolume);
-            await track.sound.playAsync();
-            log("[MomsLifesaver] Playing track:", track.metadata.id);
           } catch (error) {
             logError("[MomsLifesaver] Error playing track:", track.metadata.id, error);
           }
@@ -266,11 +314,11 @@ export const useAudioController = () => {
       tracks: Object.fromEntries(
         Object.entries(previous.tracks).map(([id, track]) => [
           id,
-          track ? { ...track, isPlaying: true } : track,
+          track ? { ...track, isPlaying: true, isPaused: false } : track,
         ]),
       ),
     }));
-  }, [state.tracks]);
+  }, [state.tracks, state.globalVolume]);
 
   const pauseSelectedTracks = useCallback(async (trackIds: TrackId[]) => {
     log("[MomsLifesaver] Pausing selected tracks:", trackIds);
@@ -293,7 +341,7 @@ export const useAudioController = () => {
       tracks: Object.fromEntries(
         Object.entries(previous.tracks).map(([id, track]) => [
           id,
-          track && trackIds.includes(id as TrackId) ? { ...track, isPlaying: false } : track,
+          track && trackIds.includes(id as TrackId) ? { ...track, isPlaying: false, isPaused: true } : track,
         ]),
       ),
     }));
@@ -304,23 +352,29 @@ export const useAudioController = () => {
     await Promise.all(
       trackIds.map(async (trackId) => {
         const track = state.tracks[trackId];
-        if (track && !track.isPlaying) {
+        if (track && (!track.isPlaying || track.isPaused)) {
           try {
-            // Only set start position if the track hasn't been played before
-            // Check if track is at position 0 (never played) to determine if we should use start position
-            const status = await track.sound.getStatusAsync();
-            if (status.isLoaded && status.positionMillis === 0) {
-              // Track hasn't been played before, use computed start position
-              const startPositionMillis = await computeStartPositionAsync(track);
-              if (startPositionMillis > 0) {
-                await track.sound.setPositionAsync(startPositionMillis);
+            if (track.isPaused) {
+              // Resume paused track
+              await track.sound.setVolumeAsync(track.volume * state.globalVolume);
+              await track.sound.playAsync();
+              log("[MomsLifesaver] Resuming track:", trackId);
+            } else {
+              // Start stopped track
+              const status = await track.sound.getStatusAsync();
+              if (status.isLoaded && status.positionMillis === 0) {
+                // Track hasn't been played before, use computed start position
+                const startPositionMillis = await computeStartPositionAsync(track);
+                if (startPositionMillis > 0) {
+                  await track.sound.setPositionAsync(startPositionMillis);
+                }
               }
+              // If track has been played before (positionMillis > 0), don't reset position
+              
+              await track.sound.setVolumeAsync(track.volume * state.globalVolume);
+              await track.sound.playAsync();
+              log("[MomsLifesaver] Playing track:", trackId);
             }
-            // If track has been played before (positionMillis > 0), don't reset position
-            
-            await track.sound.setVolumeAsync(track.volume * state.globalVolume);
-            await track.sound.playAsync();
-            log("[MomsLifesaver] Playing track:", trackId);
           } catch (error) {
             logError("[MomsLifesaver] Error playing track:", trackId, error);
           }
@@ -333,18 +387,23 @@ export const useAudioController = () => {
       tracks: Object.fromEntries(
         Object.entries(previous.tracks).map(([id, track]) => [
           id,
-          track && trackIds.includes(id as TrackId) ? { ...track, isPlaying: true } : track,
+          track && trackIds.includes(id as TrackId) ? { ...track, isPlaying: true, isPaused: false } : track,
         ]),
       ),
     }));
   }, [state.tracks, state.globalVolume]);
 
   const toggleSelectedTracksPlayPause = useCallback(async (trackIds: TrackId[]) => {
-    const hasPlayingSelectedTracks = trackIds.some(trackId => state.tracks[trackId]?.isPlaying);
+    const hasPlayingSelectedTracks = trackIds.some(trackId => {
+      const track = state.tracks[trackId];
+      return track?.isPlaying && !track.isPaused;
+    });
     
     if (hasPlayingSelectedTracks) {
+      // Pause all selected tracks that are currently playing
       await pauseSelectedTracks(trackIds);
     } else {
+      // Play all selected tracks (resume paused ones, start stopped ones)
       await playSelectedTracks(trackIds);
     }
   }, [state.tracks, pauseSelectedTracks, playSelectedTracks]);
@@ -360,12 +419,14 @@ export const useAudioController = () => {
         {
           metadata: track!.metadata,
           isPlaying: track!.isPlaying,
+          isPaused: track!.isPaused,
           volume: track!.volume,
         },
       ]),
     ) as Record<TrackId, {
       metadata: TrackMetadata;
       isPlaying: boolean;
+      isPaused: boolean;
       volume: number;
     }>;
   }, [state.tracks]);

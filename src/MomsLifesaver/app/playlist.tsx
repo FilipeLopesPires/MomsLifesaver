@@ -25,17 +25,32 @@ export default function PlaylistScreen() {
     setSelectedTrackIds((previous) => {
       const isAlreadySelected = previous.includes(track.id);
 
-      const nextSelected = isAlreadySelected
-        ? previous.filter((id) => id !== track.id)
-        : [...previous, track.id];
+      if (isAlreadySelected) {
+        // Check if all selected tracks are currently paused
+        const allSelectedTracksPaused = previous.every(trackId => {
+          const trackState = tracks[trackId];
+          return !trackState?.isPlaying || trackState.isPaused;
+        });
 
-      toggleTrack(track.id).catch(() => {
-        // noop for now; could surface an error toast later
-      });
-
-      return nextSelected;
+        if (allSelectedTracksPaused) {
+          // All tracks are paused, just deselect in UI without audio changes
+          return previous.filter((id) => id !== track.id);
+        } else {
+          // Some tracks are playing, stop the track and deselect
+          toggleTrack(track.id).catch(() => {
+            // noop for now; could surface an error toast later
+          });
+          return previous.filter((id) => id !== track.id);
+        }
+      } else {
+        // Selecting a new track
+        toggleTrack(track.id).catch(() => {
+          // noop for now; could surface an error toast later
+        });
+        return [...previous, track.id];
+      }
     });
-  }, [toggleTrack]);
+  }, [toggleTrack, tracks]);
 
   const lastSelectedTrack = useMemo(() => {
     if (selectedTrackIds.length === 0) {
@@ -47,7 +62,10 @@ export default function PlaylistScreen() {
   }, [selectedTrackIds]);
 
   const isAnySelectedTrackPlaying = useMemo(() => {
-    return selectedTrackIds.some(trackId => tracks[trackId]?.isPlaying);
+    return selectedTrackIds.some(trackId => {
+      const trackState = tracks[trackId];
+      return trackState?.isPlaying && !trackState.isPaused;
+    });
   }, [selectedTrackIds, tracks]);
 
   const handleGlobalPlayPause = useCallback(async () => {
