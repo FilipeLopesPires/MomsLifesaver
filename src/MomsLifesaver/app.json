@@ -9,7 +9,11 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "backgroundModes": ["audio"],
+      "infoPlist": {
+        "UIBackgroundModes": ["audio"]
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -20,8 +24,16 @@
       },
       "permissions": [
         "android.permission.MODIFY_AUDIO_SETTINGS",
-        "android.permission.RECORD_AUDIO"
+        "android.permission.RECORD_AUDIO",
+        "android.permission.WAKE_LOCK",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
       ],
+      "foregroundService": {
+        "mediaPlayback": {
+          "enabled": true
+        }
+      },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "com.filipelopespires.MomsLifesaver"
@@ -47,7 +59,8 @@
       [
         "expo-av",
         {
-          "microphonePermission": false
+          "microphonePermission": false,
+          "backgroundAudio": true
         }
       ]
     ],

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform } from 'react-native';
+import { Platform, AppState } from 'react-native';
 import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
 
 import { TRACK_LIBRARY, type TrackId, type TrackMetadata } from '@/constants/tracks';
@@ -29,13 +29,13 @@ const configureAudioModeAsync = async () => {
   }
 
   await Audio.setAudioModeAsync({
-    allowsRecordingIOS: false,
-    interruptionModeIOS: InterruptionModeIOS.DuckOthers,
-    playsInSilentModeIOS: true,
-    shouldDuckAndroid: true,
-    interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
-    playThroughEarpieceAndroid: false,
     staysActiveInBackground: true,
+    shouldDuckAndroid: true,
+    playThroughEarpieceAndroid: false,
+    allowsRecordingIOS: false,
+    playsInSilentModeIOS: true,
+    interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
+    interruptionModeIOS: InterruptionModeIOS.DuckOthers,
   });
 };
 
@@ -139,6 +139,27 @@ export const useAudioController = () => {
 
     return () => {
       mountedRef.current = false;
+    };
+  }, []);
+
+  // Handle app state changes to maintain background audio
+  useEffect(() => {
+    const handleAppStateChange = (nextAppState: string) => {
+      log("[MomsLifesaver] App state changed to:", nextAppState);
+      
+      if (nextAppState === 'background') {
+        log("[MomsLifesaver] App went to background - ensuring audio continues");
+        // Audio should continue playing in background due to our configuration
+      } else if (nextAppState === 'active') {
+        log("[MomsLifesaver] App became active - checking audio state");
+        // App is back in foreground, audio should still be playing
+      }
+    };
+
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+    
+    return () => {
+      subscription?.remove();
     };
   }, []);
 
