@@ -222,6 +222,32 @@ export const useAudioController = () => {
     }
   }, [state.globalVolume, state.tracks]);
 
+  const stopTrack = useCallback(async (trackId: TrackId) => {
+    const track = state.tracks[trackId];
+    if (!track) return;
+
+    try {
+      // Always stop the track regardless of current state
+      log("[MomsLifesaver] Stopping track:", trackId);
+      await track.sound.stopAsync();
+      await track.sound.setPositionAsync(0);
+      
+      setState((previous) => ({
+        ...previous,
+        tracks: {
+          ...previous.tracks,
+          [trackId]: {
+            ...previous.tracks[trackId]!,
+            isPlaying: false,
+            isPaused: false,
+          },
+        },
+      }));
+    } catch (error) {
+      logError("[MomsLifesaver] Error stopping track:", trackId, error);
+    }
+  }, [state.tracks]);
+
   const setTrackVolume = useCallback(async (trackId: TrackId, volume: number) => {
     const track = state.tracks[trackId];
     if (!track) return;
@@ -436,6 +462,7 @@ export const useAudioController = () => {
     globalVolume: state.globalVolume,
     setGlobalVolume,
     toggleTrack,
+    stopTrack,
     setTrackVolume,
     pauseSelectedTracks,
     playSelectedTracks,

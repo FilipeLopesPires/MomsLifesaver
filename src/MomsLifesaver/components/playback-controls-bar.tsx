@@ -12,6 +12,7 @@ export type PlaybackControlsBarProps = {
   // Play/Pause controls
   isPlaying: boolean;
   onToggle: () => void;
+  onStop: () => void;
   // Volume controls
   volume: number;
   onVolumeChange: (value: number) => void;
@@ -22,6 +23,7 @@ const PlaybackControlsBarComponent = ({
   selectedTrackNames,
   isPlaying, 
   onToggle, 
+  onStop,
   volume, 
   onVolumeChange 
 }: PlaybackControlsBarProps) => {
@@ -57,6 +59,19 @@ const PlaybackControlsBarComponent = ({
         >
           <Ionicons
             name={isPlaying ? 'pause' : 'play'}
+            size={24}
+            color={isDisabled ? Colors.textSecondary : Colors.accent}
+          />
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={[styles.stopButton, isDisabled && styles.buttonDisabled]} 
+          onPress={onStop} 
+          activeOpacity={0.7}
+          disabled={isDisabled}
+        >
+          <Ionicons
+            name="stop"
             size={24}
             color={isDisabled ? Colors.textSecondary : Colors.accent}
           />
@@ -110,6 +125,17 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   playButton: {
+    backgroundColor: Colors.surface,
+    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    minWidth: 48,
+  },
+  stopButton: {
     backgroundColor: Colors.surface,
     borderRadius: 8,
     paddingVertical: 12,

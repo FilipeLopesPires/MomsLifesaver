@@ -14,7 +14,7 @@ export default function PlaylistScreen() {
   log("[MomsLifesaver] PlaylistScreen component loaded");
   const [selectedTrackIds, setSelectedTrackIds] = useState<TrackId[]>([]);
   log("[MomsLifesaver] About to call useAudioController");
-  const { toggleTrack, setGlobalVolume, globalVolume, setTrackVolume, tracks, toggleSelectedTracksPlayPause } = useAudioController();
+  const { toggleTrack, stopTrack, setGlobalVolume, globalVolume, setTrackVolume, tracks, toggleSelectedTracksPlayPause } = useAudioController();
   log("[MomsLifesaver] useAudioController returned:", { tracksCount: Object.keys(tracks).length });
   
   // Get safe area insets to account for OS UI elements
@@ -80,6 +80,26 @@ export default function PlaylistScreen() {
     }
   }, [toggleSelectedTracksPlayPause, selectedTrackIds]);
 
+  const handleStopAll = useCallback(async () => {
+    try {
+      // Stop all selected tracks using the dedicated stopTrack function
+      await Promise.all(
+        selectedTrackIds.map(async (trackId) => {
+          try {
+            await stopTrack(trackId);
+          } catch (error) {
+            log("[MomsLifesaver] Error stopping track:", trackId, error);
+          }
+        })
+      );
+      
+      // Clear selection
+      setSelectedTrackIds([]);
+    } catch (error) {
+      log("[MomsLifesaver] Error stopping all tracks:", error);
+    }
+  }, [selectedTrackIds, stopTrack]);
+
   return (
     <View style={styles.container}>
       <TrackGrid
@@ -99,6 +119,7 @@ export default function PlaylistScreen() {
           selectedTrackNames={selectedTrackNames}
           isPlaying={isAnySelectedTrackPlaying} 
           onToggle={handleGlobalPlayPause}
+          onStop={handleStopAll}
           volume={globalVolume}
           onVolumeChange={setGlobalVolume}
         />
