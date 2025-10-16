@@ -7,79 +7,77 @@ import { Colors, Typography } from '@/constants/theme';
 
 export type PlaybackControlsBarProps = {
   // Track selection info
-  lastSelectedTrackTitle?: string;
+  selectedTracksCount: number;
+  selectedTrackNames: string[];
   // Play/Pause controls
   isPlaying: boolean;
   onToggle: () => void;
-  selectedTracksCount: number;
   // Volume controls
   volume: number;
   onVolumeChange: (value: number) => void;
 };
 
 const PlaybackControlsBarComponent = ({ 
-  lastSelectedTrackTitle,
+  selectedTracksCount,
+  selectedTrackNames,
   isPlaying, 
   onToggle, 
-  selectedTracksCount, 
   volume, 
   onVolumeChange 
 }: PlaybackControlsBarProps) => {
-  const getButtonText = () => {
+  const isDisabled = selectedTracksCount === 0;
+  const volumePercentage = Math.round(volume * 100);
+
+  const getTrackCountText = () => {
     if (selectedTracksCount === 0) {
       return 'No tracks selected';
     }
-    return isPlaying ? `Pause ${selectedTracksCount} track${selectedTracksCount > 1 ? 's' : ''}` : `Play ${selectedTracksCount} track${selectedTracksCount > 1 ? 's' : ''}`;
+    return `${selectedTracksCount} track${selectedTracksCount > 1 ? 's' : ''} selected`;
   };
-
-  const isDisabled = selectedTracksCount === 0;
-  const volumePercentage = Math.round(volume * 100);
 
   return (
     <View style={styles.container}>
       {/* Track Selection Section */}
       <View style={styles.trackSelectionSection}>
-        <Text style={styles.trackSelectionLabel}>Last selected</Text>
         <Text style={styles.trackSelectionTitle} numberOfLines={1}>
-          {lastSelectedTrackTitle ?? 'No track selected'}
+          {getTrackCountText()}
+        </Text>
+        <Text style={styles.trackSelectionLabel} numberOfLines={2}>
+          {selectedTrackNames.length > 0 ? selectedTrackNames.join(', ') : 'Press on a track above to select it'}
         </Text>
       </View>
 
-      {/* Play/Pause Button Section */}
-      <TouchableOpacity 
-        style={[styles.playButton, isDisabled && styles.buttonDisabled]} 
-        onPress={onToggle} 
-        activeOpacity={0.7}
-        disabled={isDisabled}
-      >
-        <View style={styles.buttonContent}>
+      {/* Play/Pause Button and Volume Control Section */}
+      <View style={styles.controlsRow}>
+        <TouchableOpacity 
+          style={[styles.playButton, isDisabled && styles.buttonDisabled]} 
+          onPress={onToggle} 
+          activeOpacity={0.7}
+          disabled={isDisabled}
+        >
           <Ionicons
             name={isPlaying ? 'pause' : 'play'}
             size={24}
             color={isDisabled ? Colors.textSecondary : Colors.accent}
           />
-          <Text style={[styles.buttonText, isDisabled && styles.buttonTextDisabled]}>
-            {getButtonText()}
-          </Text>
-        </View>
-      </TouchableOpacity>
+        </TouchableOpacity>
 
-      {/* Volume Control Section */}
-      <View style={styles.volumeSection}>
-        <View style={styles.volumeHeader}>
-          <Text style={styles.volumeLabel}>Master volume</Text>
-          <Text style={styles.volumePercentage}>{volumePercentage}%</Text>
+        <View style={styles.volumeSection}>
+          <View style={styles.volumeHeader}>
+            <Text style={styles.volumeLabel}>Master volume</Text>
+            <Text style={styles.volumePercentage}>{volumePercentage}%</Text>
+          </View>
+          <Slider
+            value={volume}
+            minimumValue={0}
+            maximumValue={1}
+            step={0.01}
+            onValueChange={onVolumeChange}
+            minimumTrackTintColor={Colors.accent}
+            maximumTrackTintColor={Colors.border}
+            thumbTintColor={Colors.accent}
+          />
         </View>
-        <Slider
-          value={volume}
-          minimumValue={0}
-          maximumValue={1}
-          step={0.01}
-          onValueChange={onVolumeChange}
-          minimumTrackTintColor={Colors.accent}
-          maximumTrackTintColor={Colors.border}
-          thumbTintColor={Colors.accent}
-        />
       </View>
     </View>
   );
@@ -106,6 +104,11 @@ const styles = StyleSheet.create({
     ...Typography.label,
     color: Colors.textPrimary,
   },
+  controlsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
   playButton: {
     backgroundColor: Colors.surface,
     borderRadius: 8,
@@ -115,25 +118,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: Colors.border,
-  },
-  buttonContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  buttonText: {
-    ...Typography.label,
-    color: Colors.textPrimary,
-    fontWeight: '600',
+    minWidth: 48,
   },
   buttonDisabled: {
     backgroundColor: Colors.surface,
     opacity: 0.5,
   },
-  buttonTextDisabled: {
-    color: Colors.textSecondary,
-  },
   volumeSection: {
+    flex: 1,
     gap: 8,
   },
   volumeHeader: {

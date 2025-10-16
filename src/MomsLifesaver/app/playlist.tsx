@@ -67,6 +67,10 @@ export default function PlaylistScreen() {
     });
   }, [selectedTrackIds, tracks]);
 
+  const selectedTrackNames = useMemo(() => {
+    return selectedTrackIds.map(trackId => TRACK_MAP[trackId]?.title).filter(Boolean);
+  }, [selectedTrackIds]);
+
   const handleGlobalPlayPause = useCallback(async () => {
     try {
       await toggleSelectedTracksPlayPause(selectedTrackIds);
@@ -91,10 +95,10 @@ export default function PlaylistScreen() {
       />
       <View style={[styles.footer, { paddingBottom: insets.bottom }]}>
         <PlaybackControlsBar 
-          lastSelectedTrackTitle={lastSelectedTrack?.title}
+          selectedTracksCount={selectedTrackIds.length}
+          selectedTrackNames={selectedTrackNames}
           isPlaying={isAnySelectedTrackPlaying} 
           onToggle={handleGlobalPlayPause}
-          selectedTracksCount={selectedTrackIds.length}
           volume={globalVolume}
           onVolumeChange={setGlobalVolume}
         />
