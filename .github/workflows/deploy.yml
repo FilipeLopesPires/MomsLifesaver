@@ -42,6 +42,9 @@ jobs:
           EXPO_PUBLIC_BASE_URL: /MomsLifesaver
         run: npx expo export -p web --output-dir ../../docs
 
+      - name: Disable Jekyll processing
+        run: touch docs/.nojekyll
+
       - name: Setup Pages
         uses: actions/configure-pages@v4
 

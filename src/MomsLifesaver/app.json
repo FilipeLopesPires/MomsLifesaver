@@ -71,7 +71,7 @@
     },
     "extra": {
       "router": {
-        "baseUrl": "/MomsLifesaver"
+        "baseUrl": "/MomsLifesaver/"
       },
       "eas": {
         "projectId": "19555ce9-5017-45c0-b904-22a3975ece18"
