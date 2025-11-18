@@ -40,8 +40,7 @@
     },
     "web": {
       "output": "../../docs",
-      "favicon": "./assets/images/favicon.png",
-      "baseUrl": "/MomsLifesaver"
+      "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
       "expo-router",
@@ -71,7 +70,7 @@
     },
     "extra": {
       "router": {
-        "baseUrl": "/MomsLifesaver/"
+        "basePath": "/MomsLifesaver"
       },
       "eas": {
         "projectId": "19555ce9-5017-45c0-b904-22a3975ece18"

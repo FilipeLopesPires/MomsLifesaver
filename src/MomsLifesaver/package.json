@@ -43,6 +43,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.1.0",
+    "cross-env": "^10.1.0",
     "eas-cli": "^16.20.1",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
