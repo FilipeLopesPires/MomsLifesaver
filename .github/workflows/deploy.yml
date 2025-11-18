@@ -45,6 +45,17 @@ jobs:
       - name: Disable Jekyll processing
         run: touch docs/.nojekyll
 
+      - name: Fix asset paths for GitHub Pages subdirectory
+        run: |
+          # Fix paths in HTML files (href and src attributes)
+          find docs -type f -name "*.html" -exec sed -i 's|href="/_expo|href="/MomsLifesaver/_expo|g' {} +
+          find docs -type f -name "*.html" -exec sed -i 's|src="/_expo|src="/MomsLifesaver/_expo|g' {} +
+          find docs -type f -name "*.html" -exec sed -i 's|href="/favicon|href="/MomsLifesaver/favicon|g' {} +
+          # Fix paths in JavaScript files (they contain asset references as strings)
+          find docs -type f -name "*.js" -exec sed -i 's|"/_expo/|"/MomsLifesaver/_expo/|g' {} +
+          find docs -type f -name "*.js" -exec sed -i 's|"/assets/|"/MomsLifesaver/assets/|g' {} +
+          find docs -type f -name "*.js" -exec sed -i 's|"/favicon|"/MomsLifesaver/favicon|g' {} +
+
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
