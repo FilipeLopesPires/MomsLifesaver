@@ -8,7 +8,7 @@
 
 **Author:** Filipe Lopes Pires ([@FilipeLopesPires](https://github.com/FilipeLopesPires))
 
-**Live Demo:** [View on GitHub Pages](https://FilipeLopesPires.github.io/MomsLifesaver/) *(Coming soon after first deployment)*
+**Live Demo:** [View on GitHub Pages](https://FilipeLopesPires.github.io/MomsLifesaver/)
 
 **Latest Release:** [View latest release](https://github.com/FilipeLopesPires/MomsLifesaver/releases/latest)
 
@@ -91,7 +91,7 @@ To build a static version of the web app for deployment:
    cd src/MomsLifesaver
    npm run export:web
    ```
-   This creates a `docs` folder at the repository root with static files ready for deployment.
+   This creates a `docs` folder at the repository root with static files ready for deployment. The base URL (`/MomsLifesaver`) is configured in `app.json` under `experiments.baseUrl` to match the GitHub Pages subdirectory.
 
 2. **Test the exported build locally**
    
