@@ -1,11 +1,14 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { Platform, DeviceEventEmitter } from 'react-native';
 import TrackPlayer, { Capability, AppKilledPlaybackBehavior, RepeatMode } from 'react-native-track-player';
-import { FOREGROUND_EVENTS } from '@/services/playback-service';
+import { FOREGROUND_EVENTS, PlaybackService } from '@/services/playback-service';
 import { log } from '@/utils/logger';
 import { handleError, handleErrorSilent } from '@/utils/error-handler';
 
 const SilenceAudio = require('@/assets/audio/silence.mp3');
+
+// Register playback service at module load (Android only)
+TrackPlayer.registerPlaybackService(() => PlaybackService);
 
 type ForegroundServiceCallbacks = {
   onTogglePlayPause: () => void;
@@ -81,7 +84,7 @@ export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
   }, []);
 
   // Store the current metadata for re-applying after track loops
-  const currentMetadataRef = useRef({ title: "Mom's Lifesaver", artist: 'Ready to play' });
+  const currentMetadataRef = useRef({ title: "Mom's Lifesaver", artist: 'Ready to play', isPlaying: false });
 
   // Listen for notification button events (Android only)
   useEffect(() => {
@@ -136,21 +139,23 @@ export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
   }, []);
 
   // Update the notification metadata by replacing the track
-  const updateMetadata = useCallback(async (title: string, artist: string) => {
+  // isAudioPlaying: true = audio is playing (show Pause icon), false = audio is paused (show Play icon)
+  const updateMetadata = useCallback(async (title: string, artist: string, isAudioPlaying: boolean = true) => {
     if (Platform.OS !== 'android') return;
     if (!isInitialized.current) return;
 
     // Skip if metadata hasn't changed
-    if (currentMetadataRef.current.title === title && currentMetadataRef.current.artist === artist) {
+    if (
+      currentMetadataRef.current.title === title && 
+      currentMetadataRef.current.artist === artist &&
+      currentMetadataRef.current.isPlaying === isAudioPlaying
+    ) {
       return;
     }
 
-    currentMetadataRef.current = { title, artist };
+    currentMetadataRef.current = { title, artist, isPlaying: isAudioPlaying };
 
     try {
-      // Get current playback state
-      const isPlaying = isServiceRunning.current;
-      
       // Remove old track and add new one with updated metadata
       // Duration: 0 hides the progress bar in the notification
       await TrackPlayer.reset();
@@ -164,12 +169,15 @@ export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
       await TrackPlayer.setRepeatMode(RepeatMode.Track);
       await TrackPlayer.setVolume(0);
       
-      // Resume playback if it was playing
-      if (isPlaying) {
+      // Sync TrackPlayer state with actual audio state
+      // This controls which icon (Play/Pause) is shown in the notification
+      if (isAudioPlaying) {
         await TrackPlayer.play();
+      } else {
+        await TrackPlayer.pause();
       }
       
-      log('[ForegroundService] Updated metadata:', title, '-', artist);
+      log('[ForegroundService] Updated metadata:', title, '-', artist, '- Playing:', isAudioPlaying);
     } catch (error) {
       handleErrorSilent(error, 'foreground-service', 'Failed to update metadata');
     }

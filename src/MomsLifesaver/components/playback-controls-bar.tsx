@@ -1,9 +1,9 @@
-import Slider from '@react-native-community/slider';
 import { memo } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Typography } from '@/constants/theme';
+import { CrossPlatformSlider } from '@/components/cross-platform-slider';
 
 export type PlaybackControlsBarProps = {
   // Track selection info
@@ -82,11 +82,10 @@ const PlaybackControlsBarComponent = ({
             <Text style={styles.volumeLabel}>Master volume</Text>
             <Text style={styles.volumePercentage}>{volumePercentage}%</Text>
           </View>
-          <Slider
+          <CrossPlatformSlider
             value={volume}
             minimumValue={0}
             maximumValue={1}
-            step={0.01}
             onValueChange={onVolumeChange}
             minimumTrackTintColor={Colors.accent}
             maximumTrackTintColor={Colors.border}

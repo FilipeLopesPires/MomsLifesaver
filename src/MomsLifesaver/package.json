@@ -13,7 +13,8 @@
     "lint": "expo lint",
     "build:android:dev": "eas build --profile development --platform android --local --output ./builds/android-dev.apk",
     "build:android:preview": "eas build --profile preview --platform android --local --output ./builds/android-preview.apk",
-    "build:android:prod": "eas build --profile production --platform android --local --output ./builds/android-prod.aab"
+    "build:android:prod": "eas build --profile production --platform android --local --output ./builds/android-prod.aab",
+    "build:android:prod-apk": "eas build --profile production-apk --platform android --local --output ./builds/android-prod.apk"
   },
   "dependencies": {
     "@expo/vector-icons": "^14.1.0",

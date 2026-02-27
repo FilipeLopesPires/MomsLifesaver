@@ -1,6 +1,6 @@
-import Slider from '@react-native-community/slider';
 import { memo, useCallback, useRef } from 'react';
 import { Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { CrossPlatformSlider } from '@/components/cross-platform-slider';
 
 import type { TrackMetadata } from '@/constants/tracks';
 import { Colors, Typography } from '@/constants/theme';
@@ -55,11 +55,10 @@ const TrackCardComponent = ({ track, isSelected, volume, onPress, onVolumeChange
                         <Text style={styles.sliderValue}>{`${Math.round(volume * 100)}%`}</Text>
                     </View>
                     */}
-                    <Slider
+                    <CrossPlatformSlider
                         value={volume}
                         minimumValue={0}
                         maximumValue={1}
-                        step={0.01}
                         onValueChange={handleVolumeChange}
                         minimumTrackTintColor={Colors.accent}
                         maximumTrackTintColor={Colors.border}

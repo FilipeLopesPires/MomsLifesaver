@@ -9,21 +9,11 @@ import { TrackListHeader } from '@/components/track-list-header';
 import { PlaybackControlsBar } from '@/components/playback-controls-bar';
 import { useAudioController } from '@/hooks/use-audio-controller';
 import { useForegroundService } from '@/hooks/use-foreground-service';
+import { useWebMediaSession } from '@/hooks/use-web-media-session';
 import { log } from '@/utils/logger';
-import { testErrorAlert } from '@/utils/error-handler';
 
 export default function PlaylistScreen() {
   const [selectedTrackIds, setSelectedTrackIds] = useState<TrackId[]>([]);
-
-  // Uncomment to test error alerts
-  /*
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      testErrorAlert('foreground-service');
-    }, 3000);
-    return () => clearTimeout(timer);
-  }, []);
-  */
   const { toggleTrack, stopTrack, setGlobalVolume, globalVolume, setTrackVolume, tracks, toggleSelectedTracksPlayPause } = useAudioController();
   
   // Refs for stable foreground service callbacks
@@ -66,6 +56,20 @@ export default function PlaylistScreen() {
     return selectedTrackIds.map(trackId => TRACK_MAP[trackId]?.title).filter(Boolean);
   }, [selectedTrackIds]);
 
+  // Web Media Session API integration (for browser media controls)
+  useWebMediaSession(
+    {
+      onTogglePlayPause: handleForegroundToggle,
+      onStop: () => {
+        const currentSelected = selectedTrackIdsRef.current;
+        Promise.all(currentSelected.map(trackId => stopTrack(trackId)));
+        setSelectedTrackIds([]);
+      },
+    },
+    isAnySelectedTrackPlaying,
+    selectedTrackNames as string[]
+  );
+
   // Track if foreground service has been started for current session
   const serviceStartedRef = useRef(false);
 
@@ -83,17 +87,17 @@ export default function PlaylistScreen() {
         timeoutId = setTimeout(() => {
           log("[MomsLifesaver] Starting foreground service (delayed)");
           startService();
-          updateMetadata(trackNamesText, 'Playing');
+          updateMetadata(trackNamesText, 'Playing', true);
           serviceStartedRef.current = true;
         }, 300);
       } else {
         // Service already running, just update metadata
-        updateMetadata(trackNamesText, 'Playing');
+        updateMetadata(trackNamesText, 'Playing', true);
       }
     } else if (selectedTrackIds.length > 0) {
       // Tracks selected but paused
       const trackNamesText = selectedTrackNames.join(', ') || "Mom's Lifesaver";
-      updateMetadata(trackNamesText, 'Paused');
+      updateMetadata(trackNamesText, 'Paused', false);
     } else {
       // No tracks selected, stop the service
       stopService();
