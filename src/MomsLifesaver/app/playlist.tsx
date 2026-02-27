@@ -10,9 +10,20 @@ import { PlaybackControlsBar } from '@/components/playback-controls-bar';
 import { useAudioController } from '@/hooks/use-audio-controller';
 import { useForegroundService } from '@/hooks/use-foreground-service';
 import { log } from '@/utils/logger';
+import { testErrorAlert } from '@/utils/error-handler';
 
 export default function PlaylistScreen() {
   const [selectedTrackIds, setSelectedTrackIds] = useState<TrackId[]>([]);
+
+  // Uncomment to test error alerts
+  /*
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      testErrorAlert('foreground-service');
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, []);
+  */
   const { toggleTrack, stopTrack, setGlobalVolume, globalVolume, setTrackVolume, tracks, toggleSelectedTracksPlayPause } = useAudioController();
   
   // Refs for stable foreground service callbacks
@@ -37,17 +48,9 @@ export default function PlaylistScreen() {
     }
   }, [toggleSelectedTracksPlayPause]);
 
-  const handleForegroundStop = useCallback(() => {
-    log("[MomsLifesaver] Foreground service: stop all");
-    const currentSelected = selectedTrackIdsRef.current;
-    Promise.all(currentSelected.map(trackId => stopTrack(trackId)));
-    setSelectedTrackIds([]);
-  }, [stopTrack]);
-
   // Initialize foreground service (Android only)
   const { startService, stopService, updateMetadata } = useForegroundService({
     onTogglePlayPause: handleForegroundToggle,
-    onStop: handleForegroundStop,
   });
 
   // Check if any selected track is currently playing

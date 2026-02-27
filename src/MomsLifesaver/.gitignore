@@ -45,4 +45,7 @@ app-example
 # vscode
 .vscode/
 
+# Build outputs
 *.apk
+*.aab
+/builds/

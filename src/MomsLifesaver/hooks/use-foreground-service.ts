@@ -2,13 +2,13 @@ import { useEffect, useCallback, useRef } from 'react';
 import { Platform, DeviceEventEmitter } from 'react-native';
 import TrackPlayer, { Capability, AppKilledPlaybackBehavior, RepeatMode } from 'react-native-track-player';
 import { FOREGROUND_EVENTS } from '@/services/playback-service';
-import { log, logError } from '@/utils/logger';
+import { log } from '@/utils/logger';
+import { handleError, handleErrorSilent } from '@/utils/error-handler';
 
 const SilenceAudio = require('@/assets/audio/silence.mp3');
 
 type ForegroundServiceCallbacks = {
   onTogglePlayPause: () => void;
-  onStop: () => void;
 };
 
 export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
@@ -36,20 +36,25 @@ export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
         });
 
         await TrackPlayer.updateOptions({
-          capabilities: [Capability.Play, Capability.Pause, Capability.Stop],
+          capabilities: [Capability.Play, Capability.Pause],
           compactCapabilities: [Capability.Play, Capability.Pause],
-          notificationCapabilities: [Capability.Play, Capability.Pause, Capability.Stop],
+          notificationCapabilities: [Capability.Play, Capability.Pause],
+          progressUpdateEventInterval: 0,
           android: {
             appKilledPlaybackBehavior: AppKilledPlaybackBehavior.StopPlaybackAndRemoveNotification,
           },
+          // Notification accent color (matches app theme #6C8CFF)
+          color: 0x6C8CFF,
         });
 
         // Add silent track that will be "played" to maintain foreground service
+        // Duration: 0 hides the progress bar in the notification
         await TrackPlayer.add({
           id: 'silence',
           url: SilenceAudio,
           title: "Mom's Lifesaver",
           artist: 'Ready to play',
+          duration: 0,
         });
 
         // Loop the silent track so it never ends
@@ -61,7 +66,7 @@ export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
         isInitialized.current = true;
         log('[ForegroundService] TrackPlayer setup complete');
       } catch (error) {
-        logError('[ForegroundService] Failed to setup TrackPlayer:', error);
+        handleError(error, 'foreground-service', 'Failed to setup TrackPlayer');
       }
     };
 
@@ -75,6 +80,9 @@ export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
     };
   }, []);
 
+  // Store the current metadata for re-applying after track loops
+  const currentMetadataRef = useRef({ title: "Mom's Lifesaver", artist: 'Ready to play' });
+
   // Listen for notification button events (Android only)
   useEffect(() => {
     if (Platform.OS !== 'android') return;
@@ -87,17 +95,8 @@ export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
       }
     );
 
-    const stopSub = DeviceEventEmitter.addListener(
-      FOREGROUND_EVENTS.STOP,
-      () => {
-        log('[ForegroundService] Received STOP event from notification');
-        callbacksRef.current.onStop();
-      }
-    );
-
     return () => {
       toggleSub.remove();
-      stopSub.remove();
     };
   }, []);
 
@@ -118,7 +117,7 @@ export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
       await TrackPlayer.play();
       isServiceRunning.current = true;
     } catch (error) {
-      logError('[ForegroundService] Failed to start service:', error);
+      handleErrorSilent(error, 'foreground-service', 'Failed to start service');
     }
   }, []);
 
@@ -132,23 +131,47 @@ export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
       await TrackPlayer.pause();
       isServiceRunning.current = false;
     } catch (error) {
-      logError('[ForegroundService] Failed to stop service:', error);
+      handleErrorSilent(error, 'foreground-service', 'Failed to stop service');
     }
   }, []);
 
-  // Update the notification metadata (title shows track names, artist shows state)
+  // Update the notification metadata by replacing the track
   const updateMetadata = useCallback(async (title: string, artist: string) => {
     if (Platform.OS !== 'android') return;
     if (!isInitialized.current) return;
 
+    // Skip if metadata hasn't changed
+    if (currentMetadataRef.current.title === title && currentMetadataRef.current.artist === artist) {
+      return;
+    }
+
+    currentMetadataRef.current = { title, artist };
+
     try {
-      await TrackPlayer.updateNowPlayingMetadata({
+      // Get current playback state
+      const isPlaying = isServiceRunning.current;
+      
+      // Remove old track and add new one with updated metadata
+      // Duration: 0 hides the progress bar in the notification
+      await TrackPlayer.reset();
+      await TrackPlayer.add({
+        id: 'silence',
+        url: SilenceAudio,
         title,
         artist,
+        duration: 0,
       });
+      await TrackPlayer.setRepeatMode(RepeatMode.Track);
+      await TrackPlayer.setVolume(0);
+      
+      // Resume playback if it was playing
+      if (isPlaying) {
+        await TrackPlayer.play();
+      }
+      
       log('[ForegroundService] Updated metadata:', title, '-', artist);
     } catch (error) {
-      logError('[ForegroundService] Failed to update metadata:', error);
+      handleErrorSilent(error, 'foreground-service', 'Failed to update metadata');
     }
   }, []);
 

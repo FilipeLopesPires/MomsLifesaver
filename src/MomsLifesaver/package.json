@@ -10,7 +10,10 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "export:web": "expo export -p web --output-dir ../../docs",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "build:android:dev": "eas build --profile development --platform android --local --output ./builds/android-dev.apk",
+    "build:android:preview": "eas build --profile preview --platform android --local --output ./builds/android-preview.apk",
+    "build:android:prod": "eas build --profile production --platform android --local --output ./builds/android-prod.aab"
   },
   "dependencies": {
     "@expo/vector-icons": "^14.1.0",
