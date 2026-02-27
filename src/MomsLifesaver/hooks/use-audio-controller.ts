@@ -82,12 +82,11 @@ const computeStartPositionAsync = async (track: LoadedTrack): Promise<number> =>
 };
 
 export const useAudioController = () => {
-  log("[MomsLifesaver] useAudioController hook called");
   const [state, setState] = useState<ControllerState>(INITIAL_STATE);
   const mountedRef = useRef(true);
+  const togglingTracksRef = useRef<Set<TrackId>>(new Set());
 
   useEffect(() => {
-    log("[MomsLifesaver] useAudioController useEffect started");
     mountedRef.current = true;
 
     const loadAsync = async () => {
@@ -164,13 +163,16 @@ export const useAudioController = () => {
   }, []);
 
   const toggleTrack = useCallback(async (trackId: TrackId) => {
+    // Prevent multiple simultaneous toggles on the same track
+    if (togglingTracksRef.current.has(trackId)) {
+      log("[MomsLifesaver] Toggle already in progress for track:", trackId);
+      return null;
+    }
+    
     const track = state.tracks[trackId];
     if (!track) return null;
 
-    // Check if all selected tracks are currently paused
-    const allSelectedTracksPaused = Object.values(state.tracks).every(t => 
-      !t || !t.isPlaying || t.isPaused
-    );
+    togglingTracksRef.current.add(trackId);
 
     try {
       if (track.isPlaying && !track.isPaused) {
@@ -191,6 +193,7 @@ export const useAudioController = () => {
           },
         }));
         
+        togglingTracksRef.current.delete(trackId);
         return false;
       } else if (track.isPaused) {
         // Track is paused - resume it
@@ -210,6 +213,7 @@ export const useAudioController = () => {
           },
         }));
         
+        togglingTracksRef.current.delete(trackId);
         return true;
       } else {
         // Track is stopped - start it
@@ -235,10 +239,12 @@ export const useAudioController = () => {
           },
         }));
         
+        togglingTracksRef.current.delete(trackId);
         return true;
       }
     } catch (error) {
       logError("[MomsLifesaver] Error in toggleTrack for:", trackId, error);
+      togglingTracksRef.current.delete(trackId);
       return track.isPlaying;
     }
   }, [state.globalVolume, state.tracks]);

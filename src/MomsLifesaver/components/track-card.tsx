@@ -1,9 +1,11 @@
 import Slider from '@react-native-community/slider';
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useRef } from 'react';
 import { Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import type { TrackMetadata } from '@/constants/tracks';
 import { Colors, Typography } from '@/constants/theme';
+
+const PRESS_DEBOUNCE_MS = 300;
 
 export type TrackCardProps = {
   track: TrackMetadata;
@@ -14,7 +16,14 @@ export type TrackCardProps = {
 };
 
 const TrackCardComponent = ({ track, isSelected, volume, onPress, onVolumeChange }: TrackCardProps) => {
+  const lastPressTime = useRef(0);
+
   const handlePress = useCallback(() => {
+    const now = Date.now();
+    if (now - lastPressTime.current < PRESS_DEBOUNCE_MS) {
+      return;
+    }
+    lastPressTime.current = now;
     onPress(track);
   }, [onPress, track]);
 
