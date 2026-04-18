@@ -69,8 +69,8 @@
       ]
     },
     "moduleNameMapper": {
-      "^@/(.*)$": "<rootDir>/$1",
-      "\\.(png|jpg|jpeg|gif|webp|svg|m4a|mp3|wav|aac|ogg)$": "<rootDir>/__mocks__/asset-stub.js"
+      "\\.(png|jpg|jpeg|gif|webp|svg|m4a|mp3|wav|aac|ogg)$": "<rootDir>/__mocks__/asset-stub.js",
+      "^@/(.*)$": "<rootDir>/$1"
     },
     "setupFiles": [
       "<rootDir>/jest.setup.ts"

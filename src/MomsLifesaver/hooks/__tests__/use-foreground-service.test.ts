@@ -1,0 +1,343 @@
+/**
+ * Tests for hooks/use-foreground-service.ts (Batch 5).
+ *
+ * Android-only notification/service lifecycle. Guards:
+ *   - No-ops on non-Android.
+ *   - Setup installs the silent "holding" track (volume 0, duration 0, loop).
+ *   - start/stop service guard rails.
+ *   - updateMetadata debouncing on identical (title, artist, isPlaying).
+ *   - updateMetadata resyncs the TrackPlayer play/pause state so the
+ *     notification's Play/Pause icon matches the real audio state.
+ *   - DeviceEventEmitter subscription uses the latest callbacks ref.
+ *   - Unmount resets TrackPlayer.
+ */
+
+jest.mock('react-native', () => ({
+  Platform: { OS: 'android' },
+  DeviceEventEmitter: {
+    addListener: jest.fn(() => ({ remove: jest.fn() })),
+    emit: jest.fn(),
+  },
+}));
+
+jest.mock('react-native-track-player', () => ({
+  __esModule: true,
+  default: {
+    setupPlayer: jest.fn().mockResolvedValue(undefined),
+    updateOptions: jest.fn().mockResolvedValue(undefined),
+    add: jest.fn().mockResolvedValue(undefined),
+    setRepeatMode: jest.fn().mockResolvedValue(undefined),
+    setVolume: jest.fn().mockResolvedValue(undefined),
+    play: jest.fn().mockResolvedValue(undefined),
+    pause: jest.fn().mockResolvedValue(undefined),
+    reset: jest.fn().mockResolvedValue(undefined),
+    addEventListener: jest.fn(() => ({ remove: jest.fn() })),
+    registerPlaybackService: jest.fn(),
+  },
+  Capability: { Play: 'play', Pause: 'pause' },
+  RepeatMode: { Track: 'track', Queue: 'queue', Off: 'off' },
+  AppKilledPlaybackBehavior: {
+    StopPlaybackAndRemoveNotification: 'stop',
+    ContinuePlayback: 'continue',
+  },
+  Event: { RemotePlay: 'remote-play', RemotePause: 'remote-pause' },
+}));
+
+jest.mock('@/utils/logger', () => ({
+  log: jest.fn(),
+}));
+
+jest.mock('@/utils/error-handler', () => ({
+  handleError: jest.fn(),
+  handleErrorSilent: jest.fn(),
+}));
+
+import { DeviceEventEmitter, Platform } from 'react-native';
+import { act, renderHook, waitFor } from '@testing-library/react';
+import TrackPlayer, { RepeatMode } from 'react-native-track-player';
+
+import { useForegroundService } from '@/hooks/use-foreground-service';
+import { FOREGROUND_EVENTS } from '@/services/playback-service';
+import { handleError } from '@/utils/error-handler';
+
+type MutablePlatform = { OS: 'ios' | 'android' | 'web' };
+const mutablePlatform = Platform as unknown as MutablePlatform;
+
+const mockedPlayer = TrackPlayer as unknown as {
+  setupPlayer: jest.Mock;
+  updateOptions: jest.Mock;
+  add: jest.Mock;
+  setRepeatMode: jest.Mock;
+  setVolume: jest.Mock;
+  play: jest.Mock;
+  pause: jest.Mock;
+  reset: jest.Mock;
+  addEventListener: jest.Mock;
+  registerPlaybackService: jest.Mock;
+};
+
+const mockedAddListener = DeviceEventEmitter.addListener as unknown as jest.Mock;
+
+const callbacks = () => ({ onTogglePlayPause: jest.fn() });
+
+const mountAndWaitForSetup = async (cb = callbacks()) => {
+  const view = renderHook(({ callbacks: c }) => useForegroundService(c), {
+    initialProps: { callbacks: cb },
+  });
+  await waitFor(() => {
+    expect(mockedPlayer.setVolume).toHaveBeenCalledWith(0);
+  });
+  return { view, cb };
+};
+
+beforeEach(() => {
+  mutablePlatform.OS = 'android';
+  jest.clearAllMocks();
+  // Re-apply default resolutions clearAllMocks preserves implementations,
+  // but mockRejectedValueOnce from a prior test is still one-time, so no
+  // explicit restore is needed.
+  mockedAddListener.mockImplementation(() => ({ remove: jest.fn() }));
+});
+
+describe('non-Android platforms', () => {
+  it.each(['ios', 'web'] as const)('is a no-op on %s', async (os) => {
+    mutablePlatform.OS = os;
+
+    const { result } = renderHook(() => useForegroundService(callbacks()));
+
+    await act(async () => {
+      await result.current.startService();
+      await result.current.stopService();
+      await result.current.updateMetadata('T', 'A', true);
+    });
+
+    expect(mockedPlayer.setupPlayer).not.toHaveBeenCalled();
+    expect(mockedPlayer.add).not.toHaveBeenCalled();
+    expect(mockedPlayer.play).not.toHaveBeenCalled();
+    expect(mockedPlayer.pause).not.toHaveBeenCalled();
+    expect(mockedPlayer.reset).not.toHaveBeenCalled();
+  });
+});
+
+describe('setup', () => {
+  it('configures TrackPlayer with the silent holding track (duration 0, volume 0, loop)', async () => {
+    await mountAndWaitForSetup();
+
+    expect(mockedPlayer.setupPlayer).toHaveBeenCalledTimes(1);
+    expect(mockedPlayer.updateOptions).toHaveBeenCalledTimes(1);
+    expect(mockedPlayer.add).toHaveBeenCalledTimes(1);
+
+    const addCall = mockedPlayer.add.mock.calls[0][0];
+    expect(addCall).toMatchObject({
+      id: 'silence',
+      title: "Mom's Lifesaver",
+      artist: 'Ready to play',
+      duration: 0,
+    });
+
+    expect(mockedPlayer.setRepeatMode).toHaveBeenCalledWith(RepeatMode.Track);
+    expect(mockedPlayer.setVolume).toHaveBeenCalledWith(0);
+  });
+
+  it('does not re-run setup across re-renders of the same mount', async () => {
+    const { view } = await mountAndWaitForSetup();
+
+    view.rerender({ callbacks: callbacks() });
+    view.rerender({ callbacks: callbacks() });
+
+    expect(mockedPlayer.setupPlayer).toHaveBeenCalledTimes(1);
+    expect(mockedPlayer.add).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces setup errors via handleError and leaves the service uninitialised', async () => {
+    mockedPlayer.setupPlayer.mockRejectedValueOnce(new Error('boom'));
+
+    const { result } = renderHook(() => useForegroundService(callbacks()));
+
+    await waitFor(() => {
+      expect(handleError).toHaveBeenCalled();
+    });
+
+    mockedPlayer.play.mockClear();
+    await act(async () => {
+      await result.current.startService();
+    });
+    expect(mockedPlayer.play).not.toHaveBeenCalled();
+  });
+});
+
+describe('startService', () => {
+  it('plays the holding track on the happy path', async () => {
+    const { view } = await mountAndWaitForSetup();
+
+    mockedPlayer.play.mockClear();
+    await act(async () => {
+      await view.result.current.startService();
+    });
+
+    expect(mockedPlayer.play).toHaveBeenCalledTimes(1);
+  });
+
+  it('is a no-op when the service is already running', async () => {
+    const { view } = await mountAndWaitForSetup();
+
+    await act(async () => {
+      await view.result.current.startService();
+    });
+    mockedPlayer.play.mockClear();
+
+    await act(async () => {
+      await view.result.current.startService();
+    });
+
+    expect(mockedPlayer.play).not.toHaveBeenCalled();
+  });
+});
+
+describe('stopService', () => {
+  it('pauses on the happy path', async () => {
+    const { view } = await mountAndWaitForSetup();
+
+    await act(async () => {
+      await view.result.current.startService();
+    });
+    mockedPlayer.pause.mockClear();
+
+    await act(async () => {
+      await view.result.current.stopService();
+    });
+
+    expect(mockedPlayer.pause).toHaveBeenCalledTimes(1);
+  });
+
+  it('is a no-op when the service was never started', async () => {
+    const { view } = await mountAndWaitForSetup();
+
+    mockedPlayer.pause.mockClear();
+    await act(async () => {
+      await view.result.current.stopService();
+    });
+
+    expect(mockedPlayer.pause).not.toHaveBeenCalled();
+  });
+});
+
+describe('updateMetadata', () => {
+  it('replaces the holding track and plays when isAudioPlaying=true', async () => {
+    const { view } = await mountAndWaitForSetup();
+
+    mockedPlayer.reset.mockClear();
+    mockedPlayer.add.mockClear();
+    mockedPlayer.play.mockClear();
+    mockedPlayer.pause.mockClear();
+
+    await act(async () => {
+      await view.result.current.updateMetadata('Rain', 'Playing', true);
+    });
+
+    expect(mockedPlayer.reset).toHaveBeenCalledTimes(1);
+    expect(mockedPlayer.add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'silence',
+        title: 'Rain',
+        artist: 'Playing',
+        duration: 0,
+      }),
+    );
+    expect(mockedPlayer.play).toHaveBeenCalledTimes(1);
+    expect(mockedPlayer.pause).not.toHaveBeenCalled();
+  });
+
+  it('pauses when isAudioPlaying=false', async () => {
+    const { view } = await mountAndWaitForSetup();
+
+    mockedPlayer.play.mockClear();
+    mockedPlayer.pause.mockClear();
+
+    await act(async () => {
+      await view.result.current.updateMetadata('Rain', 'Paused', false);
+    });
+
+    expect(mockedPlayer.pause).toHaveBeenCalledTimes(1);
+    expect(mockedPlayer.play).not.toHaveBeenCalled();
+  });
+
+  it('is debounced on identical (title, artist, isAudioPlaying)', async () => {
+    const { view } = await mountAndWaitForSetup();
+
+    await act(async () => {
+      await view.result.current.updateMetadata('Rain', 'Playing', true);
+    });
+    mockedPlayer.reset.mockClear();
+    mockedPlayer.add.mockClear();
+    mockedPlayer.play.mockClear();
+
+    await act(async () => {
+      await view.result.current.updateMetadata('Rain', 'Playing', true);
+    });
+
+    expect(mockedPlayer.reset).not.toHaveBeenCalled();
+    expect(mockedPlayer.add).not.toHaveBeenCalled();
+    expect(mockedPlayer.play).not.toHaveBeenCalled();
+  });
+
+  it('re-runs when any of title / artist / isAudioPlaying changes', async () => {
+    const { view } = await mountAndWaitForSetup();
+
+    await act(async () => {
+      await view.result.current.updateMetadata('Rain', 'Playing', true);
+    });
+    mockedPlayer.reset.mockClear();
+
+    await act(async () => {
+      await view.result.current.updateMetadata('Rain', 'Playing', false);
+    });
+    expect(mockedPlayer.reset).toHaveBeenCalledTimes(1);
+
+    mockedPlayer.reset.mockClear();
+    await act(async () => {
+      await view.result.current.updateMetadata('Heartbeat', 'Playing', false);
+    });
+    expect(mockedPlayer.reset).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('DeviceEventEmitter subscription', () => {
+  it('routes TOGGLE_PLAY_PAUSE events to the latest onTogglePlayPause', async () => {
+    const first = callbacks();
+    const view = renderHook(
+      ({ cb }) => useForegroundService(cb),
+      { initialProps: { cb: first } },
+    );
+    await waitFor(() => {
+      expect(mockedPlayer.setVolume).toHaveBeenCalledWith(0);
+    });
+
+    const subscription = mockedAddListener.mock.calls.find(
+      ([event]) => event === FOREGROUND_EVENTS.TOGGLE_PLAY_PAUSE,
+    );
+    expect(subscription).toBeDefined();
+    const [, listener] = subscription!;
+
+    act(() => listener());
+    expect(first.onTogglePlayPause).toHaveBeenCalledTimes(1);
+
+    const next = callbacks();
+    view.rerender({ cb: next });
+
+    act(() => listener());
+    expect(next.onTogglePlayPause).toHaveBeenCalledTimes(1);
+    expect(first.onTogglePlayPause).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('unmount cleanup', () => {
+  it('calls TrackPlayer.reset when the hook unmounts after a successful setup', async () => {
+    const { view } = await mountAndWaitForSetup();
+
+    mockedPlayer.reset.mockClear();
+    view.unmount();
+
+    expect(mockedPlayer.reset).toHaveBeenCalledTimes(1);
+  });
+});
