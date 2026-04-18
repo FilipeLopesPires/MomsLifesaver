@@ -108,7 +108,7 @@ export const useAudioController = () => {
         await configureAudioModeAsync();
         log("[MomsLifesaver] Audio mode configured successfully");
 
-        const entries = await Promise.all(
+        const rawEntries = await Promise.all(
           TRACK_LIBRARY.map(async (track) => {
             try {
               log("[MomsLifesaver] Loading audio for track:", track.id);
@@ -126,10 +126,16 @@ export const useAudioController = () => {
                 volume: track.defaultVolume,
               }] as const;
               } catch (error) {
+                // A single track failing to load must not block the other
+                // tracks from being available. Log and skip it.
                 logError("[MomsLifesaver] Failed to load audio for track:", track.id, error);
-                throw error;
+                return null;
               }
           }),
+        );
+
+        const entries = rawEntries.filter(
+          (entry): entry is NonNullable<typeof entry> => entry !== null,
         );
 
         if (!mountedRef.current) {
