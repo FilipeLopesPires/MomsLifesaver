@@ -4,7 +4,10 @@ import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
 
 import { TRACK_LIBRARY, type TrackId, type TrackMetadata } from '@/constants/tracks';
 import { log, logWarn, logError } from '@/utils/logger';
+import { parseStartTime } from '@/utils/start-time';
 import { WebSoundFactory } from '@/services/web-sound';
+
+export { parseStartTime };
 
 type SoundHandle = {
   playAsync: () => Promise<unknown>;
@@ -63,22 +66,6 @@ const configureAudioModeAsync = async () => {
     interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
     interruptionModeIOS: InterruptionModeIOS.DuckOthers,
   });
-};
-
-const parseStartTime = (value: string): number | null => {
-  const match = value.trim().match(/^([0-9]{1,2}):([0-9]{2})$/);
-  if (!match) {
-    return null;
-  }
-
-  const minutes = Number(match[1]);
-  const seconds = Number(match[2]);
-
-  if (Number.isNaN(minutes) || Number.isNaN(seconds) || seconds >= 60) {
-    return null;
-  }
-
-  return (minutes * 60 + seconds) * 1000;
 };
 
 const computeStartPositionAsync = async (track: LoadedTrack): Promise<number> => {
