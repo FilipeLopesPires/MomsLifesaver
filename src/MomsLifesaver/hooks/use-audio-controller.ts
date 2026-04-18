@@ -4,13 +4,39 @@ import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
 
 import { TRACK_LIBRARY, type TrackId, type TrackMetadata } from '@/constants/tracks';
 import { log, logWarn, logError } from '@/utils/logger';
+import { WebSoundFactory } from '@/services/web-sound';
+
+type SoundHandle = {
+  playAsync: () => Promise<unknown>;
+  pauseAsync: () => Promise<unknown>;
+  stopAsync: () => Promise<unknown>;
+  setVolumeAsync: (value: number) => Promise<unknown>;
+  setPositionAsync: (positionMillis: number) => Promise<unknown>;
+  getStatusAsync: () => Promise<{
+    isLoaded: boolean;
+    positionMillis: number;
+    durationMillis?: number;
+  }>;
+  unloadAsync: () => Promise<unknown>;
+};
 
 type LoadedTrack = {
   metadata: TrackMetadata;
-  sound: Audio.Sound;
+  sound: SoundHandle;
   isPlaying: boolean;
   isPaused: boolean;
   volume: number;
+};
+
+const createSoundAsync = async (
+  audioModule: number,
+  options: { volume: number; isLooping: boolean; shouldPlay: boolean },
+): Promise<{ sound: SoundHandle }> => {
+  if (Platform.OS === 'web') {
+    return WebSoundFactory.createAsync(audioModule, options);
+  }
+  const { sound } = await Audio.Sound.createAsync(audioModule, options);
+  return { sound: sound as unknown as SoundHandle };
 };
 
 type ControllerState = {
@@ -99,7 +125,7 @@ export const useAudioController = () => {
           TRACK_LIBRARY.map(async (track) => {
             try {
               log("[MomsLifesaver] Loading audio for track:", track.id);
-              const { sound } = await Audio.Sound.createAsync(track.audioModule, {
+              const { sound } = await createSoundAsync(track.audioModule, {
                 volume: track.defaultVolume,
                 isLooping: true,
                 shouldPlay: false,
