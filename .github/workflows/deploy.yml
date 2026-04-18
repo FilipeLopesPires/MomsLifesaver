@@ -38,13 +38,13 @@ jobs:
 
       - name: Build web app
         working-directory: src/MomsLifesaver
-        run: npx expo export -p web --output-dir ../../docs
+        run: npx expo export -p web --output-dir dist
 
       - name: Disable Jekyll processing
-        run: touch docs/.nojekyll
+        run: touch src/MomsLifesaver/dist/.nojekyll
 
       - name: Add SPA fallback
-        run: cp docs/index.html docs/404.html
+        run: cp src/MomsLifesaver/dist/index.html src/MomsLifesaver/dist/404.html
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
@@ -52,9 +52,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: docs
+          path: src/MomsLifesaver/dist
 
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-
