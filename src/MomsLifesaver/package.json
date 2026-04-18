@@ -1,7 +1,7 @@
 {
   "name": "momslifesaver",
   "main": "index.js",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "homepage": "https://FilipeLopesPires.github.io/MomsLifesaver",
   "scripts": {
     "start": "expo start",
