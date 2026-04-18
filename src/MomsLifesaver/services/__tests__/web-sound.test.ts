@@ -96,7 +96,7 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-describe('WebSound - iOS volume routing (regression guard)', () => {
+describe('WebSound - non-iOS volume routing (regression guard)', () => {
   it('routes audio through MediaElementSource -> GainNode -> destination after load', async () => {
     const { WebSound: Fresh } = loadFreshModule();
     const sound = new Fresh(1, { volume: 0.5, isLooping: true, shouldPlay: false });
@@ -181,6 +181,76 @@ describe('WebSound - streaming (memory regression guard)', () => {
     expect(audio.preload).toBe('auto');
     expect(audio.loop).toBe(true);
     expect(audio.crossOrigin).toBe('anonymous');
+  });
+});
+
+describe('WebSound - iOS background playback', () => {
+  const IOS_UA =
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1';
+
+  beforeEach(() => {
+    // userAgent lives on Navigator.prototype as a getter; redefine on
+    // the instance to override, then delete in afterEach to restore.
+    Object.defineProperty(window.navigator, 'userAgent', {
+      configurable: true,
+      get: () => IOS_UA,
+    });
+  });
+
+  afterEach(() => {
+    delete (window.navigator as unknown as { userAgent?: string }).userAgent;
+  });
+
+  it('does NOT route through Web Audio on iOS (no MediaElementSource, no GainNode)', async () => {
+    const { WebSound: Fresh } = loadFreshModule();
+    const sound = new Fresh(1, { volume: 0.5, isLooping: true, shouldPlay: false });
+
+    dispatchLoaded(lastAudio());
+    await sound.whenLoaded();
+
+    const ctx = mocks.lastContext();
+    if (ctx) {
+      expect(ctx.createMediaElementSource).not.toHaveBeenCalled();
+      expect(ctx.createGain).not.toHaveBeenCalled();
+    }
+    expect(mocks.gainNodes).toHaveLength(0);
+    expect(mocks.sourceNodes).toHaveLength(0);
+  });
+
+  it('setVolumeAsync writes to HTMLAudioElement.volume on iOS', async () => {
+    const { WebSound: Fresh } = loadFreshModule();
+    const sound = new Fresh(1, { volume: 1, isLooping: false, shouldPlay: false });
+    dispatchLoaded(lastAudio());
+    await sound.whenLoaded();
+
+    await sound.setVolumeAsync(0.3);
+
+    expect(lastAudio().volume).toBeCloseTo(0.3, 5);
+    expect(mocks.gainNodes).toHaveLength(0);
+  });
+
+  it('playAsync does not call AudioContext.resume on iOS', async () => {
+    const { WebSound: Fresh } = loadFreshModule();
+    const sound = new Fresh(1, { volume: 1, isLooping: false, shouldPlay: false });
+    dispatchLoaded(lastAudio());
+    await sound.whenLoaded();
+
+    const playSpy = jest.spyOn(HTMLMediaElement.prototype, 'play');
+    await sound.playAsync();
+
+    const ctx = mocks.lastContext();
+    if (ctx) {
+      expect(ctx.resume).not.toHaveBeenCalled();
+    }
+    expect(playSpy).toHaveBeenCalled();
+  });
+
+  it('sets playsInline on every audio element', () => {
+    const { WebSound: Fresh } = loadFreshModule();
+    new Fresh(1, { volume: 1, isLooping: false, shouldPlay: false });
+    const audio = lastAudio();
+    expect(audio.playsInline).toBe(true);
+    expect(audio.getAttribute('playsinline')).not.toBeNull();
   });
 });
 

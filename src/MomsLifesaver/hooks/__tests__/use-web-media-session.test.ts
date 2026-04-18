@@ -14,6 +14,15 @@ jest.mock('react-native', () => ({
   Platform: { OS: 'web' },
 }));
 
+jest.mock('expo-asset', () => ({
+  Asset: {
+    fromModule: (_module: unknown) => ({
+      uri: '/MomsLifesaver/assets/icon.png',
+      localUri: null,
+    }),
+  },
+}));
+
 import { Platform } from 'react-native';
 import { act, renderHook } from '@testing-library/react';
 
@@ -35,6 +44,7 @@ type FakeMetadata = {
   title: string;
   artist: string;
   album: string;
+  artwork?: { src: string; sizes?: string; type?: string }[];
 };
 
 let fakeMediaSession: FakeMediaSession;
@@ -62,10 +72,17 @@ const installMediaSession = () => {
       title: string;
       artist: string;
       album: string;
-      constructor(init: { title: string; artist: string; album: string }) {
+      artwork?: { src: string; sizes?: string; type?: string }[];
+      constructor(init: {
+        title: string;
+        artist: string;
+        album: string;
+        artwork?: { src: string; sizes?: string; type?: string }[];
+      }) {
         this.title = init.title;
         this.artist = init.artist;
         this.album = init.album;
+        this.artwork = init.artwork;
         metadataInstances.push(this);
       }
     };
@@ -148,6 +165,19 @@ describe('web happy path', () => {
       album: "Mom's Lifesaver",
     });
     expect(fakeMediaSession.playbackState).toBe('playing');
+  });
+
+  it('includes artwork in metadata so the iOS lock-screen card renders', () => {
+    renderHook(() =>
+      useWebMediaSession(defaultCallbacks(), true, ['Rain']),
+    );
+
+    const latest = metadataInstances.at(-1);
+    expect(latest?.artwork).toBeDefined();
+    expect(Array.isArray(latest?.artwork)).toBe(true);
+    expect(latest?.artwork?.length).toBeGreaterThan(0);
+    expect(latest?.artwork?.[0]?.src).toEqual(expect.any(String));
+    expect(latest?.artwork?.[0]?.src.length).toBeGreaterThan(0);
   });
 
   it('falls back to the app name when trackNames is empty', () => {

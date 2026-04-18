@@ -1,12 +1,27 @@
 /**
  * Web-only replacement for `expo-av`'s `Audio.Sound`.
  *
- * Wraps an `HTMLAudioElement` and routes it through a shared Web
- * `AudioContext` + `GainNode` so that iOS Safari honors volume changes
- * (setting `HTMLAudioElement.volume` is a no-op there). Exposes the
- * subset of the `Sound` API that `useAudioController` relies on:
- * `playAsync`, `pauseAsync`, `stopAsync`, `setVolumeAsync`,
- * `setPositionAsync`, `getStatusAsync`, and `unloadAsync`.
+ * Wraps an `HTMLAudioElement` and exposes the subset of the `Sound`
+ * API that `useAudioController` relies on: `playAsync`, `pauseAsync`,
+ * `stopAsync`, `setVolumeAsync`, `setPositionAsync`, `getStatusAsync`,
+ * and `unloadAsync`.
+ *
+ * Two volume strategies are used depending on the platform:
+ *
+ *   - Non-iOS (Android Chrome, desktop browsers): the element is routed
+ *     through a shared Web `AudioContext` + `GainNode` so volume can be
+ *     controlled cleanly. This was originally added because pre-16.4
+ *     Mobile Safari ignored `HTMLAudioElement.volume`.
+ *
+ *   - iOS Safari / iOS Chrome: the Web Audio routing is skipped and
+ *     volume is written directly to `HTMLAudioElement.volume`. iOS
+ *     intentionally suspends any `AudioContext` whose owning page is
+ *     hidden or whose device screen is locked, which broke background
+ *     playback. Bypassing the AudioContext is the only way to keep
+ *     audio alive in the background and surface it on the lock screen
+ *     via the Media Session API. iOS 16.4+ honors element volume; on
+ *     older iOS the slider has no audible effect (acceptable
+ *     trade-off in exchange for working background playback).
  */
 import { Asset } from 'expo-asset';
 
@@ -57,6 +72,15 @@ type ACWindow = Window & {
   webkitAudioContext?: typeof AudioContext;
 };
 
+const isIOSWeb = (): boolean => {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  if (/iPad|iPhone|iPod/.test(ua)) return true;
+  // iPadOS 13+ reports as Mac; disambiguate via touch points.
+  const nav = navigator as Navigator & { maxTouchPoints?: number };
+  return ua.includes('Mac') && typeof document !== 'undefined' && (nav.maxTouchPoints ?? 0) > 1;
+};
+
 let sharedContext: AudioContext | null = null;
 
 const getAudioContext = (): AudioContext | null => {
@@ -100,7 +124,14 @@ export class WebSound {
     audio.loop = options.isLooping ?? false;
     audio.preload = 'auto';
     audio.crossOrigin = 'anonymous';
-    audio.volume = 1;
+    // playsInline is required on iOS so the element doesn't get punted to
+    // the native fullscreen player and so it participates in the page's
+    // media session (kept alive when the tab is hidden / screen locked).
+    // The property is typed on HTMLVideoElement only, but iOS Safari also
+    // honors it on HTMLAudioElement.
+    (audio as HTMLAudioElement & { playsInline?: boolean }).playsInline = true;
+    audio.setAttribute('playsinline', '');
+    audio.volume = isIOSWeb() ? this.pendingVolume : 1;
     this.audio = audio;
 
     this.loadedPromise = new Promise<void>((resolve) => {
@@ -136,6 +167,10 @@ export class WebSound {
 
   private setupWebAudioRouting(): void {
     if (this.sourceNode) return;
+    // iOS suspends Web Audio when the page is hidden or screen locked,
+    // which kills background playback. Skip routing on iOS and let the
+    // <audio> element drive output directly.
+    if (isIOSWeb()) return;
     const ctx = getAudioContext();
     if (!ctx) return;
     try {
@@ -150,7 +185,9 @@ export class WebSound {
   }
 
   private playNow(): void {
-    resumeAudioContext();
+    if (!isIOSWeb()) {
+      resumeAudioContext();
+    }
     this.audio.play().catch((error) => {
       logError('[MomsLifesaver] WebSound play error:', this.uri, error);
     });

@@ -12,10 +12,20 @@
  */
 import { useEffect, useCallback, useRef } from 'react';
 import { Platform } from 'react-native';
+import { Asset } from 'expo-asset';
 
 type MediaSessionCallbacks = {
   onTogglePlayPause: () => void;
   onStop: () => void;
+};
+
+const resolveArtworkSrc = (): string => {
+  try {
+    const asset = Asset.fromModule(require('@/assets/images/icon.png'));
+    return asset.uri ?? asset.localUri ?? '';
+  } catch {
+    return '';
+  }
 };
 
 export const useWebMediaSession = (
@@ -38,10 +48,15 @@ export const useWebMediaSession = (
       ? trackNames.join(', ')
       : "Mom's Lifesaver";
 
+    const artworkSrc = resolveArtworkSrc();
+
     navigator.mediaSession.metadata = new MediaMetadata({
       title,
       artist: isPlaying ? 'Playing' : 'Paused',
       album: "Mom's Lifesaver",
+      artwork: artworkSrc
+        ? [{ src: artworkSrc, sizes: '512x512', type: 'image/png' }]
+        : [],
     });
 
     navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
