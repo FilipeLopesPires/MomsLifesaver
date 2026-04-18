@@ -9,7 +9,7 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web --host lan",
-    "export:web": "expo export -p web --output-dir ../../docs",
+    "export:web": "expo export -p web --output-dir dist && rm -rf ../../docs && mkdir -p ../../docs && cp -r dist/. ../../docs/",
     "lint": "expo lint",
     "test": "jest",
     "build:android:dev": "eas build --profile development --platform android --local --output ./builds/android-dev.apk",
