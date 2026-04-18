@@ -1,3 +1,14 @@
+/**
+ * Centralized error reporting helpers.
+ *
+ * `handleError` logs the full technical error via the app logger and
+ * (on native only) shows a short, user-friendly `Alert`. Web surfaces
+ * errors silently because hot reloads during development would trigger
+ * an alert on every save.
+ *
+ * `handleErrorSilent` logs but never alerts - use it for non-critical
+ * errors where a popup would be noise.
+ */
 import { Alert, Platform } from 'react-native';
 import { logError } from './logger';
 

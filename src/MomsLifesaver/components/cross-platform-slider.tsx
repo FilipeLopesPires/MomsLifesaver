@@ -1,3 +1,9 @@
+/**
+ * Thin wrapper around a slider input that renders an `<input type="range">`
+ * on web (styled with inline CSS to match the app's theme) and delegates
+ * to `@react-native-community/slider` on native. The two implementations
+ * share the same prop contract so callers don't have to branch.
+ */
 import { Platform, View, StyleSheet } from 'react-native';
 import { Colors } from '@/constants/theme';
 

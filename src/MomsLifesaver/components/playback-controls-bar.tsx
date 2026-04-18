@@ -1,3 +1,11 @@
+/**
+ * Bottom bar shown on the playlist screen.
+ *
+ * Summarises the current track selection, exposes play/pause and stop
+ * buttons that act on all selected tracks at once, and owns the master
+ * volume slider. Pure presentation: all state changes are delegated to
+ * the parent through the callback props.
+ */
 import { memo } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';

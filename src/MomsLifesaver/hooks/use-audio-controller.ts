@@ -1,3 +1,18 @@
+/**
+ * Core audio controller hook.
+ *
+ * Owns the in-memory playback state for every track in `TRACK_LIBRARY`:
+ *   - loads each track once into a platform-appropriate `Sound` handle
+ *     (`expo-av` on native, `WebSound` on web),
+ *   - tracks per-track `isPlaying` / `isPaused` / `volume` flags,
+ *   - exposes toggle / play / pause / stop / volume helpers that operate
+ *     either on a single track id or on an arbitrary subset of ids,
+ *   - configures the native audio mode so playback continues in the
+ *     background.
+ *
+ * `TrackMetadata.startTimes` (when provided) is used to pick a random
+ * starting cue on fresh plays; resumed tracks keep their position.
+ */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, AppState } from 'react-native';
 import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';

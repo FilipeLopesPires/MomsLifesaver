@@ -1,3 +1,13 @@
+/**
+ * Web-only replacement for `expo-av`'s `Audio.Sound`.
+ *
+ * Wraps an `HTMLAudioElement` and routes it through a shared Web
+ * `AudioContext` + `GainNode` so that iOS Safari honors volume changes
+ * (setting `HTMLAudioElement.volume` is a no-op there). Exposes the
+ * subset of the `Sound` API that `useAudioController` relies on:
+ * `playAsync`, `pauseAsync`, `stopAsync`, `setVolumeAsync`,
+ * `setPositionAsync`, `getStatusAsync`, and `unloadAsync`.
+ */
 import { Asset } from 'expo-asset';
 
 import { log, logError } from '@/utils/logger';

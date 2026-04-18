@@ -1,3 +1,19 @@
+/**
+ * Android-only foreground service hook.
+ *
+ * Uses `react-native-track-player` to host a long-lived media-style
+ * notification while the user has tracks selected. The notification lets
+ * Android keep the app alive for background audio and exposes a
+ * play/pause remote action that maps back to `onTogglePlayPause`.
+ *
+ * The real audio is produced by `useAudioController`; this hook only
+ * plays a silent looping track at volume 0 so the foreground service
+ * stays active and the notification can carry the current metadata.
+ *
+ * On web, the companion file `use-foreground-service.web.ts` exports
+ * no-op implementations so the rest of the app code stays platform-
+ * agnostic.
+ */
 import { useEffect, useCallback, useRef } from 'react';
 import { Platform, DeviceEventEmitter } from 'react-native';
 import TrackPlayer, { Capability, AppKilledPlaybackBehavior, RepeatMode } from 'react-native-track-player';
@@ -7,7 +23,6 @@ import { handleError, handleErrorSilent } from '@/utils/error-handler';
 
 const SilenceAudio = require('@/assets/audio/silence.mp3');
 
-// Register playback service at module load (Android only)
 TrackPlayer.registerPlaybackService(() => PlaybackService);
 
 type ForegroundServiceCallbacks = {

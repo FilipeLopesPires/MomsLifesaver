@@ -1,3 +1,10 @@
+/**
+ * Multi-column grid of `TrackCard`s rendered with `FlatList`.
+ *
+ * Pads the data array with invisible placeholders so the final row
+ * always has `numColumns` cells (keeps the last row's card widths
+ * consistent with the rest of the grid).
+ */
 import { memo, useCallback, useMemo } from 'react';
 import { FlatList, StyleSheet, View } from 'react-native';
 

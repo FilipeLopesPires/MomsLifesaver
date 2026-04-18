@@ -1,3 +1,11 @@
+/**
+ * Single-track tile rendered inside the playlist grid.
+ *
+ * Tapping the icon toggles selection (delegated to `onPress`). When
+ * selected, the card reveals a per-track volume slider. Taps are
+ * debounced by `PRESS_DEBOUNCE_MS` to avoid double-toggle glitches when
+ * users press the icon rapidly.
+ */
 import { memo, useCallback, useRef } from 'react';
 import { Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { CrossPlatformSlider } from '@/components/cross-platform-slider';

@@ -1,3 +1,15 @@
+/**
+ * Web-only hook that wires browser media controls to our playback state.
+ *
+ * When running on the web, it registers `play`, `pause`, and `stop`
+ * action handlers on `navigator.mediaSession` and keeps the session
+ * metadata (title, artist, playback state) in sync with the currently
+ * selected tracks. This makes the app respond to keyboard media keys,
+ * the OS media widget, and Bluetooth headset buttons in browsers that
+ * expose the Media Session API.
+ *
+ * No-op on native platforms.
+ */
 import { useEffect, useCallback, useRef } from 'react';
 import { Platform } from 'react-native';
 
