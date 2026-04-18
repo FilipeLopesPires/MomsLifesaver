@@ -1,95 +1,99 @@
-# Logging System Usage
+# Logging System
 
 ## Overview
-The MomsLifesaver app now uses a centralized logging system that allows you to enable/disable all console logs with granular verbosity control.
+
+The Mom's Lifesaver app routes every console call through a centralized
+logger (`utils/logger.ts`). Two runtime flags control what actually
+reaches the console:
+
+- `LOGGING_ENABLED` - master switch for everything except errors.
+- `VERBOSE_ENABLED` - opens the gate to `log`, `logInfo`, and `logDebug`.
+
+Both flags default to `true` inside `logger.ts` and are overridden at
+startup by `app/index.tsx` (see [Configuration](#configuration) below).
 
 ## Verbosity Levels
 
-The logging system supports three levels of verbosity:
+| `LOGGING_ENABLED` | `VERBOSE_ENABLED` | `log` | `logWarn` | `logError` | `logInfo` | `logDebug` |
+| ----------------- | ----------------- | ----- | --------- | ---------- | --------- | ---------- |
+| false             | any               | no    | no        | yes        | no        | no         |
+| true              | false             | no    | yes       | yes        | no        | no         |
+| true              | true              | yes   | yes       | yes        | yes       | yes        |
 
-### Level 1: Errors Only
-- **When**: `LOGGING_ENABLED = false`
-- **What prints**: Only `logError()` calls (always prints regardless of settings)
-- **Use case**: Production builds, minimal logging
+- **Level 1 (errors only)** - good for production builds.
+- **Level 2 (warnings + errors)** - useful for production debugging.
+- **Level 3 (full verbose)** - the default during development.
 
-### Level 2: Warnings and Errors
-- **When**: `LOGGING_ENABLED = true` AND `VERBOSE_ENABLED = false`
-- **What prints**: `logWarn()` and `logError()` calls
-- **Use case**: Production debugging, important issues only
+`logError` always prints because it is reserved for genuine failures the
+user or developer needs to know about.
 
-### Level 3: Full Verbose Logging
-- **When**: `LOGGING_ENABLED = true` AND `VERBOSE_ENABLED = true`
-- **What prints**: `log()`, `logWarn()`, `logError()`, `logInfo()`, `logDebug()` calls
-- **Use case**: Development, full debugging
+## Configuration
 
-## How to Control Logging
+### At app startup
 
-### Method 1: Edit the main app file
-Edit `/src/MomsLifesaver/app/index.tsx`:
+Edit `app/index.tsx` to pick the verbosity level used for the running app:
 
-```typescript
-// Level 1: Errors only
+```ts
+import { setLoggingEnabled, setVerboseEnabled } from '@/utils/logger';
+
+// Level 1: errors only
 setLoggingEnabled(false);
 
-// Level 2: Warnings and errors
+// Level 2: warnings and errors
 setLoggingEnabled(true);
 setVerboseEnabled(false);
 
-// Level 3: Full verbose logging
+// Level 3: full verbose logging
 setLoggingEnabled(true);
 setVerboseEnabled(true);
 ```
 
-### Method 2: Runtime control (for development)
-```typescript
-import { setLoggingEnabled, setVerboseEnabled, isLoggingEnabled, isVerboseEnabled } from '@/utils/logger';
+### At runtime
 
-// Check current status
+The same functions can be called from anywhere at runtime - e.g. from a
+debug overlay, tests, or the React Native DevTools console:
+
+```ts
+import {
+  setLoggingEnabled,
+  setVerboseEnabled,
+  isLoggingEnabled,
+  isVerboseEnabled,
+} from '@/utils/logger';
+
 console.log('Logging enabled:', isLoggingEnabled());
 console.log('Verbose enabled:', isVerboseEnabled());
 
-// Set verbosity levels
 setLoggingEnabled(true);
-setVerboseEnabled(false); // Only warnings and errors
+setVerboseEnabled(false); // warnings and errors only
 ```
 
-## Available Logging Functions
+## API
 
-- `log(message, ...params)` - General logging (requires verbose mode)
-- `logError(message, ...params)` - Error logging (always prints regardless of settings)
-- `logWarn(message, ...params)` - Warning logging (prints if logging enabled)
-- `logInfo(message, ...params)` - Info logging (requires verbose mode)
-- `logDebug(message, ...params)` - Debug logging (requires verbose mode)
+- `log(message, ...params)` - general logging; requires verbose mode.
+- `logError(message, ...params)` - always prints.
+- `logWarn(message, ...params)` - prints if logging is enabled.
+- `logInfo(message, ...params)` - requires verbose mode.
+- `logDebug(message, ...params)` - requires verbose mode.
 
-## Verbosity Rules Summary
+## Example
 
-| LOGGING_ENABLED | VERBOSE_ENABLED | log() | logWarn() | logError() | logInfo() | logDebug() |
-|----------------|-----------------|-------|-----------|------------|-----------|------------|
-| false          | any             | ❌    | ❌        | ✅         | ❌        | ❌         |
-| true           | false           | ❌    | ✅        | ✅         | ❌        | ❌         |
-| true           | true            | ✅    | ✅        | ✅         | ✅        | ✅         |
-
-## Benefits
-
-1. **Performance**: When disabled, no console operations are performed
-2. **Clean Production**: Easy to disable all logs for production builds
-3. **Granular Control**: Choose between errors-only, warnings+errors, or full verbose
-4. **Debugging**: Easy to enable/disable during development
-5. **Consistent**: All logging goes through the same system
-
-## Example Usage
-
-```typescript
+```ts
 import { log, logWarn, logError } from '@/utils/logger';
 
-// This will only log if logging is enabled AND verbose mode is on
 log('User clicked button');
 log('Processing data:', data);
 
-// This will log if logging is enabled (regardless of verbose mode)
 logWarn('Low memory warning');
 logError('Failed to load audio:', error);
 ```
 
-## Current Status
-All console.log calls in the app have been replaced with the new logging system with verbosity support.
+## Why a wrapper?
+
+1. **Performance** - when disabled, the guarded branches short-circuit
+   before calling `console.*`.
+2. **Clean production output** - one flag silences the entire app.
+3. **Granular control** - errors, warnings, and verbose logs can be
+   toggled independently.
+4. **Consistency** - every call site uses the same API, which makes it
+   straightforward to search, filter, or redirect log output later.

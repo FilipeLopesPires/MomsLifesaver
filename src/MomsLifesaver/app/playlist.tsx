@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -8,15 +8,109 @@ import { TrackGrid } from '@/components/track-grid';
 import { TrackListHeader } from '@/components/track-list-header';
 import { PlaybackControlsBar } from '@/components/playback-controls-bar';
 import { useAudioController } from '@/hooks/use-audio-controller';
+import { useForegroundService } from '@/hooks/use-foreground-service';
+import { useWebMediaSession } from '@/hooks/use-web-media-session';
 import { log } from '@/utils/logger';
 
 export default function PlaylistScreen() {
-  log("[MomsLifesaver] PlaylistScreen component loaded");
   const [selectedTrackIds, setSelectedTrackIds] = useState<TrackId[]>([]);
-  log("[MomsLifesaver] About to call useAudioController");
   const { toggleTrack, stopTrack, setGlobalVolume, globalVolume, setTrackVolume, tracks, toggleSelectedTracksPlayPause } = useAudioController();
-  log("[MomsLifesaver] useAudioController returned:", { tracksCount: Object.keys(tracks).length });
   
+  // Refs for stable foreground service callbacks
+  const selectedTrackIdsRef = useRef<TrackId[]>(selectedTrackIds);
+  const tracksRef = useRef(tracks);
+  
+  // Keep refs up to date
+  useEffect(() => {
+    selectedTrackIdsRef.current = selectedTrackIds;
+  }, [selectedTrackIds]);
+  
+  useEffect(() => {
+    tracksRef.current = tracks;
+  }, [tracks]);
+
+  // Foreground service callbacks (handle notification button presses)
+  const handleForegroundToggle = useCallback(() => {
+    log("[MomsLifesaver] Foreground service: toggle play/pause");
+    const currentSelected = selectedTrackIdsRef.current;
+    if (currentSelected.length > 0) {
+      toggleSelectedTracksPlayPause(currentSelected);
+    }
+  }, [toggleSelectedTracksPlayPause]);
+
+  // Initialize foreground service (Android only)
+  const { startService, stopService, updateMetadata } = useForegroundService({
+    onTogglePlayPause: handleForegroundToggle,
+  });
+
+  // Check if any selected track is currently playing
+  const isAnySelectedTrackPlaying = useMemo(() => {
+    return selectedTrackIds.some(trackId => {
+      const trackState = tracks[trackId];
+      return trackState?.isPlaying && !trackState.isPaused;
+    });
+  }, [selectedTrackIds, tracks]);
+
+  // Get names of selected tracks for notification
+  const selectedTrackNames = useMemo(() => {
+    return selectedTrackIds.map(trackId => TRACK_MAP[trackId]?.title).filter(Boolean);
+  }, [selectedTrackIds]);
+
+  // Web Media Session API integration (for browser media controls)
+  useWebMediaSession(
+    {
+      onTogglePlayPause: handleForegroundToggle,
+      onStop: () => {
+        const currentSelected = selectedTrackIdsRef.current;
+        Promise.all(currentSelected.map(trackId => stopTrack(trackId)));
+        setSelectedTrackIds([]);
+      },
+    },
+    isAnySelectedTrackPlaying,
+    selectedTrackNames as string[]
+  );
+
+  // Track if foreground service has been started for current session
+  const serviceStartedRef = useRef(false);
+
+  // Manage foreground service based on playback state
+  useEffect(() => {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    if (isAnySelectedTrackPlaying) {
+      const trackNamesText = selectedTrackNames.length > 0 
+        ? selectedTrackNames.join(', ') 
+        : "Mom's Lifesaver";
+      
+      if (!serviceStartedRef.current) {
+        // First time starting - delay to avoid race condition with track toggle
+        timeoutId = setTimeout(() => {
+          log("[MomsLifesaver] Starting foreground service (delayed)");
+          startService();
+          updateMetadata(trackNamesText, 'Playing', true);
+          serviceStartedRef.current = true;
+        }, 300);
+      } else {
+        // Service already running, just update metadata
+        updateMetadata(trackNamesText, 'Playing', true);
+      }
+    } else if (selectedTrackIds.length > 0) {
+      // Tracks selected but paused
+      const trackNamesText = selectedTrackNames.join(', ') || "Mom's Lifesaver";
+      updateMetadata(trackNamesText, 'Paused', false);
+    } else {
+      // No tracks selected, stop the service
+      stopService();
+      serviceStartedRef.current = false;
+    }
+
+    return () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [isAnySelectedTrackPlaying, selectedTrackNames, selectedTrackIds.length, startService, stopService, updateMetadata]);
+
   // Get safe area insets to account for OS UI elements
   const insets = useSafeAreaInsets();
 
@@ -50,26 +144,6 @@ export default function PlaylistScreen() {
       }
     });
   }, [toggleTrack, tracks]);
-
-  const lastSelectedTrack = useMemo(() => {
-    if (selectedTrackIds.length === 0) {
-      return undefined;
-    }
-
-    const lastId = selectedTrackIds[selectedTrackIds.length - 1];
-    return TRACK_MAP[lastId];
-  }, [selectedTrackIds]);
-
-  const isAnySelectedTrackPlaying = useMemo(() => {
-    return selectedTrackIds.some(trackId => {
-      const trackState = tracks[trackId];
-      return trackState?.isPlaying && !trackState.isPaused;
-    });
-  }, [selectedTrackIds, tracks]);
-
-  const selectedTrackNames = useMemo(() => {
-    return selectedTrackIds.map(trackId => TRACK_MAP[trackId]?.title).filter(Boolean);
-  }, [selectedTrackIds]);
 
   const handleGlobalPlayPause = useCallback(async () => {
     try {

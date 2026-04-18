@@ -1,16 +1,12 @@
 /**
- * Global logging utility for MomsLifesaver app
- * Allows enabling/disabling all console logs with a single flag
+ * Global logging utility for the Mom's Lifesaver app.
+ *
+ * Provides a single place to enable/disable console output with a
+ * verbosity toggle. See `utils/README.md` for the full verbosity matrix.
+ *
+ * Defaults below are overridden at startup by `app/index.tsx`.
  */
 
-/**
- * Global logging utility for MomsLifesaver app
- * Allows enabling/disabling all console logs with a single flag
- * Supports verbosity levels for granular control
- */
-
-// Global flags to control logging
-// It's overridden by app/index.tsx
 let LOGGING_ENABLED = true;
 let VERBOSE_ENABLED = true;
 

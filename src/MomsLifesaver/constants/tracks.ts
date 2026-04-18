@@ -7,11 +7,11 @@ import ShushIcon from '../assets/icons/shush.png';
 
 import KalimbaAudio from '../assets/audio/kalimba.m4a';
 import RainAudio from '../assets/audio/rain.mp3';
-import WaterStreamSoftAudio from '../assets/audio/water stream soft.mp3';
-import WaterStreamIntenseAudio from '../assets/audio/water stream intense.mp3';
+import WaterStreamSoftAudio from '../assets/audio/water-stream-soft.mp3';
+import WaterStreamIntenseAudio from '../assets/audio/water-stream-intense.mp3';
 import HeartbeatAudio from '../assets/audio/heartbeat.mp3';
-import ShShShAudio from '../assets/audio/sh sh sh.mp3';
-import ShShShShShAudio from '../assets/audio/sh sh sh sh sh.mp3';
+import ShShShAudio from '../assets/audio/sh-sh-sh.mp3';
+import ShShShShShAudio from '../assets/audio/sh-sh-sh-sh-sh.mp3';
 
 export type TrackId =
   | 'kalimba'

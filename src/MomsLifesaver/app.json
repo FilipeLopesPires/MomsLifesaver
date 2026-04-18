@@ -2,12 +2,12 @@
   "expo": {
     "name": "MomsLifesaver",
     "slug": "MomsLifesaver",
-    "version": "1.0.1",
+    "version": "1.0.3",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "momslifesaver",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "ios": {
       "supportsTablet": true,
       "backgroundModes": ["audio"],
@@ -29,13 +29,6 @@
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
       ],
-      "foregroundService": {
-        "mediaPlayback": {
-          "enabled": true
-        }
-      },
-      "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false,
       "package": "com.filipelopespires.MomsLifesaver"
     },
     "web": {
@@ -66,7 +59,6 @@
     ],
     "experiments": {
       "typedRoutes": true,
-      "reactCompiler": true,
       "baseUrl": "/MomsLifesaver"
     },
     "extra": {

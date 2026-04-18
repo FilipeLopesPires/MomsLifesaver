@@ -1,9 +1,19 @@
-import Slider from '@react-native-community/slider';
-import { memo, useCallback } from 'react';
+/**
+ * Single-track tile rendered inside the playlist grid.
+ *
+ * Tapping the icon toggles selection (delegated to `onPress`). When
+ * selected, the card reveals a per-track volume slider. Taps are
+ * debounced by `PRESS_DEBOUNCE_MS` to avoid double-toggle glitches when
+ * users press the icon rapidly.
+ */
+import { memo, useCallback, useRef } from 'react';
 import { Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { CrossPlatformSlider } from '@/components/cross-platform-slider';
 
 import type { TrackMetadata } from '@/constants/tracks';
 import { Colors, Typography } from '@/constants/theme';
+
+const PRESS_DEBOUNCE_MS = 300;
 
 export type TrackCardProps = {
   track: TrackMetadata;
@@ -14,7 +24,14 @@ export type TrackCardProps = {
 };
 
 const TrackCardComponent = ({ track, isSelected, volume, onPress, onVolumeChange }: TrackCardProps) => {
+  const lastPressTime = useRef(0);
+
   const handlePress = useCallback(() => {
+    const now = Date.now();
+    if (now - lastPressTime.current < PRESS_DEBOUNCE_MS) {
+      return;
+    }
+    lastPressTime.current = now;
     onPress(track);
   }, [onPress, track]);
 
@@ -46,11 +63,10 @@ const TrackCardComponent = ({ track, isSelected, volume, onPress, onVolumeChange
                         <Text style={styles.sliderValue}>{`${Math.round(volume * 100)}%`}</Text>
                     </View>
                     */}
-                    <Slider
+                    <CrossPlatformSlider
                         value={volume}
                         minimumValue={0}
                         maximumValue={1}
-                        step={0.01}
                         onValueChange={handleVolumeChange}
                         minimumTrackTintColor={Colors.accent}
                         maximumTrackTintColor={Colors.border}

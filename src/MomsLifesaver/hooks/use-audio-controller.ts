@@ -1,16 +1,60 @@
+/**
+ * Core audio controller hook.
+ *
+ * Owns the in-memory playback state for every track in `TRACK_LIBRARY`:
+ *   - loads each track once into a platform-appropriate `Sound` handle
+ *     (`expo-av` on native, `WebSound` on web),
+ *   - tracks per-track `isPlaying` / `isPaused` / `volume` flags,
+ *   - exposes toggle / play / pause / stop / volume helpers that operate
+ *     either on a single track id or on an arbitrary subset of ids,
+ *   - configures the native audio mode so playback continues in the
+ *     background.
+ *
+ * `TrackMetadata.startTimes` (when provided) is used to pick a random
+ * starting cue on fresh plays; resumed tracks keep their position.
+ */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, AppState } from 'react-native';
 import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
 
 import { TRACK_LIBRARY, type TrackId, type TrackMetadata } from '@/constants/tracks';
 import { log, logWarn, logError } from '@/utils/logger';
+import { parseStartTime } from '@/utils/start-time';
+import { WebSoundFactory } from '@/services/web-sound';
+
+export { parseStartTime };
+
+type SoundHandle = {
+  playAsync: () => Promise<unknown>;
+  pauseAsync: () => Promise<unknown>;
+  stopAsync: () => Promise<unknown>;
+  setVolumeAsync: (value: number) => Promise<unknown>;
+  setPositionAsync: (positionMillis: number) => Promise<unknown>;
+  getStatusAsync: () => Promise<{
+    isLoaded: boolean;
+    positionMillis: number;
+    durationMillis?: number;
+  }>;
+  unloadAsync: () => Promise<unknown>;
+};
 
 type LoadedTrack = {
   metadata: TrackMetadata;
-  sound: Audio.Sound;
+  sound: SoundHandle;
   isPlaying: boolean;
   isPaused: boolean;
   volume: number;
+};
+
+const createSoundAsync = async (
+  audioModule: number,
+  options: { volume: number; isLooping: boolean; shouldPlay: boolean },
+): Promise<{ sound: SoundHandle }> => {
+  if (Platform.OS === 'web') {
+    return WebSoundFactory.createAsync(audioModule, options);
+  }
+  const { sound } = await Audio.Sound.createAsync(audioModule, options);
+  return { sound: sound as unknown as SoundHandle };
 };
 
 type ControllerState = {
@@ -37,22 +81,6 @@ const configureAudioModeAsync = async () => {
     interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
     interruptionModeIOS: InterruptionModeIOS.DuckOthers,
   });
-};
-
-const parseStartTime = (value: string): number | null => {
-  const match = value.trim().match(/^([0-9]{1,2}):([0-9]{2})$/);
-  if (!match) {
-    return null;
-  }
-
-  const minutes = Number(match[1]);
-  const seconds = Number(match[2]);
-
-  if (Number.isNaN(minutes) || Number.isNaN(seconds) || seconds >= 60) {
-    return null;
-  }
-
-  return (minutes * 60 + seconds) * 1000;
 };
 
 const computeStartPositionAsync = async (track: LoadedTrack): Promise<number> => {
@@ -82,12 +110,11 @@ const computeStartPositionAsync = async (track: LoadedTrack): Promise<number> =>
 };
 
 export const useAudioController = () => {
-  log("[MomsLifesaver] useAudioController hook called");
   const [state, setState] = useState<ControllerState>(INITIAL_STATE);
   const mountedRef = useRef(true);
+  const togglingTracksRef = useRef<Set<TrackId>>(new Set());
 
   useEffect(() => {
-    log("[MomsLifesaver] useAudioController useEffect started");
     mountedRef.current = true;
 
     const loadAsync = async () => {
@@ -96,11 +123,11 @@ export const useAudioController = () => {
         await configureAudioModeAsync();
         log("[MomsLifesaver] Audio mode configured successfully");
 
-        const entries = await Promise.all(
+        const rawEntries = await Promise.all(
           TRACK_LIBRARY.map(async (track) => {
             try {
               log("[MomsLifesaver] Loading audio for track:", track.id);
-              const { sound } = await Audio.Sound.createAsync(track.audioModule, {
+              const { sound } = await createSoundAsync(track.audioModule, {
                 volume: track.defaultVolume,
                 isLooping: true,
                 shouldPlay: false,
@@ -114,10 +141,16 @@ export const useAudioController = () => {
                 volume: track.defaultVolume,
               }] as const;
               } catch (error) {
+                // A single track failing to load must not block the other
+                // tracks from being available. Log and skip it.
                 logError("[MomsLifesaver] Failed to load audio for track:", track.id, error);
-                throw error;
+                return null;
               }
           }),
+        );
+
+        const entries = rawEntries.filter(
+          (entry): entry is NonNullable<typeof entry> => entry !== null,
         );
 
         if (!mountedRef.current) {
@@ -164,13 +197,16 @@ export const useAudioController = () => {
   }, []);
 
   const toggleTrack = useCallback(async (trackId: TrackId) => {
+    // Prevent multiple simultaneous toggles on the same track
+    if (togglingTracksRef.current.has(trackId)) {
+      log("[MomsLifesaver] Toggle already in progress for track:", trackId);
+      return null;
+    }
+    
     const track = state.tracks[trackId];
     if (!track) return null;
 
-    // Check if all selected tracks are currently paused
-    const allSelectedTracksPaused = Object.values(state.tracks).every(t => 
-      !t || !t.isPlaying || t.isPaused
-    );
+    togglingTracksRef.current.add(trackId);
 
     try {
       if (track.isPlaying && !track.isPaused) {
@@ -191,6 +227,7 @@ export const useAudioController = () => {
           },
         }));
         
+        togglingTracksRef.current.delete(trackId);
         return false;
       } else if (track.isPaused) {
         // Track is paused - resume it
@@ -210,6 +247,7 @@ export const useAudioController = () => {
           },
         }));
         
+        togglingTracksRef.current.delete(trackId);
         return true;
       } else {
         // Track is stopped - start it
@@ -235,10 +273,12 @@ export const useAudioController = () => {
           },
         }));
         
+        togglingTracksRef.current.delete(trackId);
         return true;
       }
     } catch (error) {
       logError("[MomsLifesaver] Error in toggleTrack for:", trackId, error);
+      togglingTracksRef.current.delete(trackId);
       return track.isPlaying;
     }
   }, [state.globalVolume, state.tracks]);
