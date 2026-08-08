@@ -191,9 +191,30 @@ describe('TrackGrid list configuration', () => {
     expect(props.ListHeaderComponent).toBeUndefined();
   });
 
-  it('uses selectedTrackIds as extraData so FlatList re-renders on selection changes', () => {
+  it('carries both selectedTrackIds and volumes in extraData', () => {
+    // renderItem reads both, so both must invalidate the cells. Selection
+    // alone is not enough: with a stable renderItem, a volume change would
+    // otherwise leave every slider painted at its old position.
     const selected: TrackId[] = ['rain' as TrackId];
-    const props = getFlatListProps({ selectedTrackIds: selected });
-    expect(props.extraData).toBe(selected);
+    const volumes = { rain: 0.4 } as unknown as Record<TrackId, number>;
+
+    const props = getFlatListProps({ selectedTrackIds: selected, volumes });
+
+    expect(props.extraData).toEqual({ selectedTrackIds: selected, volumes });
+  });
+
+  it('keeps extraData referentially stable when neither input changes', () => {
+    const selected: TrackId[] = ['rain' as TrackId];
+    const volumes = { rain: 0.4 } as unknown as Record<TrackId, number>;
+    const props = { selectedTrackIds: selected, volumes };
+
+    const view = render(<TrackGrid {...baseProps()} {...props} />);
+    const first = view.UNSAFE_getByType(FlatList).props.extraData;
+    view.rerender(<TrackGrid {...baseProps()} {...props} />);
+    const second = view.UNSAFE_getByType(FlatList).props.extraData;
+
+    // A fresh object every render would make extraData meaningless and
+    // re-render every cell unconditionally.
+    expect(second).toBe(first);
   });
 });

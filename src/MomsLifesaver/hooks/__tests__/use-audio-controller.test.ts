@@ -236,6 +236,63 @@ describe('loadAsync', () => {
   });
 });
 
+describe('callback identity stability', () => {
+  // TrackGrid and TrackCard are memo()'d, and playlist.tsx threads these
+  // callbacks down as props. If any of them is recreated when playback state
+  // changes, memo is defeated and every tile re-renders on every volume tick.
+  // These are stable only because the hook reads state through a ref; adding
+  // `state.tracks` back to a dependency array fails this test.
+  const CALLBACKS = [
+    'toggleTrack',
+    'stopTrack',
+    'setTrackVolume',
+    'setGlobalVolume',
+    'pauseSelectedTracks',
+    'playSelectedTracks',
+    'toggleSelectedTracksPlayPause',
+  ] as const;
+
+  it('keeps every callback identity stable across a playback state change', async () => {
+    const { result } = await mount();
+    const before = { ...result.current };
+
+    await act(async () => {
+      await result.current.toggleTrack('rain');
+    });
+    // Confirm state really did change, or the assertion below proves nothing.
+    expect(result.current.tracks['rain'].isPlaying).toBe(true);
+
+    for (const name of CALLBACKS) {
+      expect(result.current[name]).toBe(before[name]);
+    }
+  });
+
+  it('keeps every callback identity stable across a volume change', async () => {
+    const { result } = await mount();
+    const before = { ...result.current };
+
+    await act(async () => {
+      await result.current.setGlobalVolume(0.25);
+    });
+    expect(result.current.globalVolume).toBe(0.25);
+
+    for (const name of CALLBACKS) {
+      expect(result.current[name]).toBe(before[name]);
+    }
+  });
+
+  it('still exposes fresh track state despite the stable callbacks', async () => {
+    const { result } = await mount();
+
+    await act(async () => {
+      await result.current.setTrackVolume('rain', 0.5);
+    });
+
+    // The ref must not make the rendered view stale.
+    expect(result.current.tracks['rain'].volume).toBe(0.5);
+  });
+});
+
 describe('audio session configuration (background playback contract)', () => {
   // Background playback is the entire point of the app, and it is configured
   // by exactly one call. The expo-av -> expo-audio migration renamed every

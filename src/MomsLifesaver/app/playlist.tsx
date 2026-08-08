@@ -121,7 +121,7 @@ export default function PlaylistScreen() {
       if (isAlreadySelected) {
         // Check if all selected tracks are currently paused
         const allSelectedTracksPaused = previous.every(trackId => {
-          const trackState = tracks[trackId];
+          const trackState = tracksRef.current[trackId];
           return !trackState?.isPlaying || trackState.isPaused;
         });
 
@@ -143,22 +143,38 @@ export default function PlaylistScreen() {
         return [...previous, track.id];
       }
     });
-  }, [toggleTrack, tracks]);
+  }, [toggleTrack]);
+
+  const handleTrackVolumeChange = useCallback(
+    (track: TrackMetadata, value: number) => setTrackVolume(track.id, value),
+    [setTrackVolume],
+  );
+
+  // Rebuilt only when a volume actually changes, so TrackGrid's memo and its
+  // extraData both stay meaningful. Previously this object was recreated on
+  // every render, which alone was enough to re-render all seven tiles.
+  const volumes = useMemo(
+    () =>
+      Object.fromEntries(
+        TRACK_LIBRARY.map((track) => [track.id, tracks[track.id]?.volume ?? track.defaultVolume]),
+      ) as Record<TrackId, number>,
+    [tracks],
+  );
 
   const handleGlobalPlayPause = useCallback(async () => {
     try {
-      await toggleSelectedTracksPlayPause(selectedTrackIds);
+      await toggleSelectedTracksPlayPause(selectedTrackIdsRef.current);
     } catch (error) {
       // Handle error if needed
       log("[MomsLifesaver] Error toggling selected tracks play/pause:", error);
     }
-  }, [toggleSelectedTracksPlayPause, selectedTrackIds]);
+  }, [toggleSelectedTracksPlayPause]);
 
   const handleStopAll = useCallback(async () => {
     try {
       // Stop all selected tracks using the dedicated stopTrack function
       await Promise.all(
-        selectedTrackIds.map(async (trackId) => {
+        selectedTrackIdsRef.current.map(async (trackId) => {
           try {
             await stopTrack(trackId);
           } catch (error) {
@@ -166,13 +182,13 @@ export default function PlaylistScreen() {
           }
         })
       );
-      
+
       // Clear selection
       setSelectedTrackIds([]);
     } catch (error) {
       log("[MomsLifesaver] Error stopping all tracks:", error);
     }
-  }, [selectedTrackIds, stopTrack]);
+  }, [stopTrack]);
 
   return (
     <View style={styles.container}>
@@ -180,10 +196,8 @@ export default function PlaylistScreen() {
         data={TRACK_LIBRARY}
         selectedTrackIds={selectedTrackIds}
         onTrackPress={handleTrackPress}
-        onTrackVolumeChange={(track, value) => setTrackVolume(track.id, value)}
-        volumes={Object.fromEntries(
-          TRACK_LIBRARY.map((track) => [track.id, tracks[track.id]?.volume ?? track.defaultVolume]),
-        ) as Record<TrackId, number>}
+        onTrackVolumeChange={handleTrackVolumeChange}
+        volumes={volumes}
         numColumns={3}
         ListHeaderComponent={TrackListHeader}
       />
