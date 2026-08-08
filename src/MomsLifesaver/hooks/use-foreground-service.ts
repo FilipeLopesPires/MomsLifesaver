@@ -12,13 +12,12 @@
  *
  * Initialization is lazy: `TrackPlayer.setupPlayer()` and the initial
  * silent-track `add()` only run the first time the caller invokes
- * `startService()` / `updateMetadata()`. This avoids a mount-time race
- * on real devices where RNTP's new MediaSession + AudioFocus request
- * causes expo-av's ExoPlayer instances (loaded in parallel by
- * `useAudioController`) to be torn down silently, producing the
- * `E_AUDIO_NOPLAYER` "Player does not exist." error on the first
- * playAsync. The Android emulator's audio HAL is lax and does not
- * reproduce this, so the bug only shows up on hardware.
+ * `startService()` / `updateMetadata()`. Real audio is handled by
+ * `expo-audio` (AndroidX Media3), which shares a single audio session
+ * with RNTP's Media3 instance, so there is no cross-stack AudioFocus
+ * race. Metadata updates use `updateNowPlayingMetadata` and do not
+ * rebuild the silent queue, which would otherwise re-request
+ * AudioFocus and disturb the real tracks.
  *
  * On web, the companion file `use-foreground-service.web.ts` exports
  * no-op implementations so the rest of the app code stays platform-
@@ -73,6 +72,10 @@ export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
           progressUpdateEventInterval: 0,
           android: {
             appKilledPlaybackBehavior: AppKilledPlaybackBehavior.StopPlaybackAndRemoveNotification,
+            // Expo-audio owns AudioFocus for the real tracks. Do not let
+            // RNTP auto-pause the silent queue on transient interruptions
+            // or we'll flicker the notification state.
+            alwaysPauseOnInterruption: false,
           },
           // Notification accent color (matches app theme #6C8CFF)
           color: 0x6C8CFF,
@@ -198,21 +201,19 @@ export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
     currentMetadataRef.current = { title, artist, isPlaying: isAudioPlaying };
 
     try {
-      // Remove old track and add new one with updated metadata
-      // Duration: 0 hides the progress bar in the notification
-      await TrackPlayer.reset();
-      await TrackPlayer.add({
-        id: 'silence',
-        url: SilenceAudio,
+      // Update the notification's displayed metadata in place. This is
+      // deliberately non-destructive: we do not call reset/add/play here,
+      // because that sequence re-requests AudioFocus and disturbs the
+      // expo-audio players that are producing the actual audio.
+      // Duration: 0 hides the progress bar in the notification.
+      await TrackPlayer.updateNowPlayingMetadata({
         title,
         artist,
         duration: 0,
       });
-      await TrackPlayer.setRepeatMode(RepeatMode.Track);
-      await TrackPlayer.setVolume(0);
 
-      // Sync TrackPlayer state with actual audio state
-      // This controls which icon (Play/Pause) is shown in the notification
+      // Sync TrackPlayer's internal state with the real audio state so
+      // the notification shows the correct Play/Pause icon.
       if (isAudioPlaying) {
         await TrackPlayer.play();
       } else {

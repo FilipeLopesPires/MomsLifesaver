@@ -31,6 +31,8 @@ type CreateOptions = {
   volume?: number;
   isLooping?: boolean;
   shouldPlay?: boolean;
+  /** Ignored on web; kept for API parity with NativeSoundFactory. */
+  debugLabel?: string;
 };
 
 type PlaybackStatus = {

@@ -1,14 +1,16 @@
 /**
- * Tests for hooks/use-foreground-service.ts (Batch 5).
+ * Tests for hooks/use-foreground-service.ts.
  *
  * Android-only notification/service lifecycle. Guards:
  *   - No-ops on non-Android.
  *   - Setup is LAZY: TrackPlayer.setupPlayer only runs the first time a
- *     caller invokes startService/updateMetadata (never on mount). This
- *     prevents a race with expo-av's ExoPlayer instances.
+ *     caller invokes startService/updateMetadata (never on mount).
  *   - Setup installs the silent "holding" track (volume 0, duration 0, loop).
  *   - start/stop service guard rails.
- *   - updateMetadata debouncing on identical (title, artist, isPlaying).
+ *   - updateMetadata uses TrackPlayer.updateNowPlayingMetadata and does
+ *     NOT call reset/add: the silent queue is kept intact so expo-audio
+ *     does not lose AudioFocus while the user adds/removes tracks.
+ *   - updateMetadata is debounced on identical (title, artist, isPlaying).
  *   - updateMetadata resyncs the TrackPlayer play/pause state so the
  *     notification's Play/Pause icon matches the real audio state.
  *   - DeviceEventEmitter subscription uses the latest callbacks ref.
@@ -34,6 +36,7 @@ jest.mock('react-native-track-player', () => ({
     play: jest.fn().mockResolvedValue(undefined),
     pause: jest.fn().mockResolvedValue(undefined),
     reset: jest.fn().mockResolvedValue(undefined),
+    updateNowPlayingMetadata: jest.fn().mockResolvedValue(undefined),
     addEventListener: jest.fn(() => ({ remove: jest.fn() })),
     registerPlaybackService: jest.fn(),
   },
@@ -75,6 +78,7 @@ const mockedPlayer = TrackPlayer as unknown as {
   play: jest.Mock;
   pause: jest.Mock;
   reset: jest.Mock;
+  updateNowPlayingMetadata: jest.Mock;
   addEventListener: jest.Mock;
   registerPlaybackService: jest.Mock;
 };
@@ -133,6 +137,7 @@ describe('non-Android platforms', () => {
     expect(mockedPlayer.play).not.toHaveBeenCalled();
     expect(mockedPlayer.pause).not.toHaveBeenCalled();
     expect(mockedPlayer.reset).not.toHaveBeenCalled();
+    expect(mockedPlayer.updateNowPlayingMetadata).not.toHaveBeenCalled();
   });
 });
 
@@ -274,11 +279,12 @@ describe('stopService', () => {
 });
 
 describe('updateMetadata', () => {
-  it('replaces the holding track and plays when isAudioPlaying=true', async () => {
+  it('updates the now-playing metadata in place and plays when isAudioPlaying=true', async () => {
     const { view } = await mountAndWaitForSetup();
 
     mockedPlayer.reset.mockClear();
     mockedPlayer.add.mockClear();
+    mockedPlayer.updateNowPlayingMetadata.mockClear();
     mockedPlayer.play.mockClear();
     mockedPlayer.pause.mockClear();
 
@@ -286,10 +292,14 @@ describe('updateMetadata', () => {
       await view.result.current.updateMetadata('Rain', 'Playing', true);
     });
 
-    expect(mockedPlayer.reset).toHaveBeenCalledTimes(1);
-    expect(mockedPlayer.add).toHaveBeenCalledWith(
+    // Non-destructive path: no reset, no re-add of the silent track.
+    // Tearing the queue down here would re-request AudioFocus and
+    // disturb the expo-audio players that are producing the real audio.
+    expect(mockedPlayer.reset).not.toHaveBeenCalled();
+    expect(mockedPlayer.add).not.toHaveBeenCalled();
+    expect(mockedPlayer.updateNowPlayingMetadata).toHaveBeenCalledTimes(1);
+    expect(mockedPlayer.updateNowPlayingMetadata).toHaveBeenCalledWith(
       expect.objectContaining({
-        id: 'silence',
         title: 'Rain',
         artist: 'Playing',
         duration: 0,
@@ -304,13 +314,16 @@ describe('updateMetadata', () => {
 
     mockedPlayer.play.mockClear();
     mockedPlayer.pause.mockClear();
+    mockedPlayer.updateNowPlayingMetadata.mockClear();
 
     await act(async () => {
       await view.result.current.updateMetadata('Rain', 'Paused', false);
     });
 
+    expect(mockedPlayer.updateNowPlayingMetadata).toHaveBeenCalledTimes(1);
     expect(mockedPlayer.pause).toHaveBeenCalledTimes(1);
     expect(mockedPlayer.play).not.toHaveBeenCalled();
+    expect(mockedPlayer.reset).not.toHaveBeenCalled();
   });
 
   it('is debounced on identical (title, artist, isAudioPlaying)', async () => {
@@ -321,6 +334,7 @@ describe('updateMetadata', () => {
     });
     mockedPlayer.reset.mockClear();
     mockedPlayer.add.mockClear();
+    mockedPlayer.updateNowPlayingMetadata.mockClear();
     mockedPlayer.play.mockClear();
 
     await act(async () => {
@@ -329,6 +343,7 @@ describe('updateMetadata', () => {
 
     expect(mockedPlayer.reset).not.toHaveBeenCalled();
     expect(mockedPlayer.add).not.toHaveBeenCalled();
+    expect(mockedPlayer.updateNowPlayingMetadata).not.toHaveBeenCalled();
     expect(mockedPlayer.play).not.toHaveBeenCalled();
   });
 
@@ -338,18 +353,18 @@ describe('updateMetadata', () => {
     await act(async () => {
       await view.result.current.updateMetadata('Rain', 'Playing', true);
     });
-    mockedPlayer.reset.mockClear();
+    mockedPlayer.updateNowPlayingMetadata.mockClear();
 
     await act(async () => {
       await view.result.current.updateMetadata('Rain', 'Playing', false);
     });
-    expect(mockedPlayer.reset).toHaveBeenCalledTimes(1);
+    expect(mockedPlayer.updateNowPlayingMetadata).toHaveBeenCalledTimes(1);
 
-    mockedPlayer.reset.mockClear();
+    mockedPlayer.updateNowPlayingMetadata.mockClear();
     await act(async () => {
       await view.result.current.updateMetadata('Heartbeat', 'Playing', false);
     });
-    expect(mockedPlayer.reset).toHaveBeenCalledTimes(1);
+    expect(mockedPlayer.updateNowPlayingMetadata).toHaveBeenCalledTimes(1);
   });
 });
 
