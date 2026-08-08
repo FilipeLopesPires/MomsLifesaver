@@ -13,6 +13,7 @@
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
     "test": "jest",
+    "test:coverage": "jest --coverage",
     "build:android:dev": "eas build --profile development --platform android --local --output ./builds/android-dev.apk",
     "build:android:preview": "eas build --profile preview --platform android --local --output ./builds/android-preview.apk",
     "build:android:prod": "eas build --profile production --platform android --local --output ./builds/android-prod.aab",
@@ -44,15 +45,56 @@
     "react-native-web": "^0.20.0"
   },
   "jest": {
+    "collectCoverageFrom": [
+      "app/**/*.{ts,tsx}",
+      "components/**/*.{ts,tsx}",
+      "constants/**/*.ts",
+      "hooks/**/*.ts",
+      "services/**/*.ts",
+      "utils/**/*.ts",
+      "!**/__tests__/**",
+      "!**/*.d.ts",
+      "!app/_layout.tsx",
+      "!app/+not-found.tsx"
+    ],
+    "coveragePathIgnorePatterns": [
+      "/node_modules/",
+      "/dist/",
+      "/builds/",
+      "/scripts/"
+    ],
+    "coverageReporters": [
+      "text-summary",
+      "text",
+      "lcov"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "statements": 92,
+        "branches": 86,
+        "functions": 92,
+        "lines": 92
+      },
+      "./hooks/use-audio-controller.ts": {
+        "statements": 89,
+        "branches": 80,
+        "functions": 95,
+        "lines": 90
+      },
+      "./services/web-sound.ts": {
+        "statements": 87,
+        "branches": 72,
+        "functions": 88,
+        "lines": 89
+      }
+    },
     "projects": [
       {
         "displayName": "web",
         "testEnvironment": "jsdom",
+        "restoreMocks": true,
         "testMatch": [
-          "<rootDir>/constants/__tests__/**/*.test.ts",
-          "<rootDir>/utils/__tests__/**/*.test.ts",
-          "<rootDir>/services/__tests__/**/*.test.ts",
-          "<rootDir>/hooks/__tests__/**/*.test.ts"
+          "<rootDir>/{constants,utils,services,hooks}/__tests__/**/*.test.ts?(x)"
         ],
         "transform": {
           "^.+\\.(ts|tsx|js|jsx)$": [
@@ -80,9 +122,9 @@
       {
         "displayName": "native",
         "preset": "jest-expo",
+        "restoreMocks": true,
         "testMatch": [
-          "<rootDir>/components/__tests__/**/*.test.tsx",
-          "<rootDir>/app/__tests__/**/*.test.tsx"
+          "<rootDir>/{components,app}/__tests__/**/*.test.ts?(x)"
         ],
         "moduleNameMapper": {
           "\\.(png|jpg|jpeg|gif|webp|svg|m4a|mp3|wav|aac|ogg)$": "<rootDir>/__mocks__/asset-stub.js",

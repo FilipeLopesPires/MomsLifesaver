@@ -24,6 +24,13 @@ type MockAudioContext = {
   resume: jest.Mock<Promise<void>, []>;
   createGain: jest.Mock<MockGainNode, []>;
   createMediaElementSource: jest.Mock<MockMediaElementSource, [HTMLAudioElement]>;
+  // Present but never expected to be called: WebSound must stream through
+  // <audio>, not decode whole files into memory. Defined as spies (rather
+  // than left undefined) so the tests can assert they were NOT called - an
+  // assertion against `undefined` would hold no matter what WebSound did.
+  decodeAudioData: jest.Mock;
+  createBuffer: jest.Mock;
+  createBufferSource: jest.Mock;
 };
 
 type AudioMocks = {
@@ -58,6 +65,9 @@ const makeAudioContext = (): MockAudioContext => {
       audioMocks.sourceNodes.push(node);
       return node;
     }),
+    decodeAudioData: jest.fn(),
+    createBuffer: jest.fn(),
+    createBufferSource: jest.fn(),
   };
   audioMocks.instances.push(instance);
   return instance;

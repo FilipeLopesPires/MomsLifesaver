@@ -220,12 +220,56 @@ describe('setup', () => {
     });
 
     expect(handleError).toHaveBeenCalled();
+    // Discriminating assertion: stopService() early-returns on
+    // !isServiceRunning regardless of whether setup failed, so asserting
+    // only on `pause` would pass even if setup had succeeded. `play` is
+    // reached only when ensureInitialized() returned true.
+    expect(mockedPlayer.play).not.toHaveBeenCalled();
 
     mockedPlayer.play.mockClear();
     await act(async () => {
       await result.current.stopService();
     });
     expect(mockedPlayer.pause).not.toHaveBeenCalled();
+  });
+
+  it('retries setup on a later startService() after the first attempt failed', async () => {
+    mockedPlayer.setupPlayer.mockRejectedValueOnce(new Error('boom'));
+    const { view } = mountWithoutSetup();
+
+    await act(async () => {
+      await view.result.current.startService();
+    });
+    expect(mockedPlayer.setupPlayer).toHaveBeenCalledTimes(1);
+    expect(mockedPlayer.play).not.toHaveBeenCalled();
+
+    // The cached rejected promise must NOT be reused: without the
+    // `setupPromiseRef.current = null` reset on failure, one transient error
+    // would leave the notification permanently dead for the whole session.
+    await act(async () => {
+      await view.result.current.startService();
+    });
+
+    expect(mockedPlayer.setupPlayer).toHaveBeenCalledTimes(2);
+    expect(mockedPlayer.setVolume).toHaveBeenCalledWith(0);
+    expect(mockedPlayer.play).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries setup from updateMetadata() too, not just startService()', async () => {
+    mockedPlayer.setupPlayer.mockRejectedValueOnce(new Error('boom'));
+    const { view } = mountWithoutSetup();
+
+    await act(async () => {
+      await view.result.current.updateMetadata('Rain', 'Playing', true);
+    });
+    expect(mockedPlayer.updateNowPlayingMetadata).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await view.result.current.updateMetadata('Rain', 'Playing', true);
+    });
+
+    expect(mockedPlayer.setupPlayer).toHaveBeenCalledTimes(2);
+    expect(mockedPlayer.updateNowPlayingMetadata).toHaveBeenCalledTimes(1);
   });
 });
 

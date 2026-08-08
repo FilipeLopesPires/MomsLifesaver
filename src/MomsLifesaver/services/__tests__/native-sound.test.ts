@@ -212,3 +212,117 @@ describe('NativeSoundFactory.createAsync', () => {
     }
   });
 });
+
+describe('NativeSoundHandle transport and status', () => {
+  const loadedHandle = async (configure?: (stub: PlayerStub) => void) => {
+    const stub = makePlayerStub();
+    stub.isLoaded = true; // exercise the already-loaded fast path
+    configure?.(stub);
+    mockCreateAudioPlayer.mockReturnValue(stub);
+    const { sound } = await NativeSoundFactory.createAsync(1, {
+      volume: 1,
+      isLooping: true,
+      shouldPlay: false,
+    });
+    return { sound, stub };
+  };
+
+  it('resolves immediately when the player is already loaded', async () => {
+    const { stub } = await loadedHandle();
+    // The fast path must not wait on an event that will never arrive.
+    expect(stub.play).not.toHaveBeenCalled();
+  });
+
+  it('stopAsync pauses and rewinds to zero', async () => {
+    const { sound, stub } = await loadedHandle();
+
+    await sound.stopAsync();
+
+    expect(stub.pause).toHaveBeenCalledTimes(1);
+    expect(stub.seekTo).toHaveBeenCalledWith(0);
+  });
+
+  it('stopAsync still pauses when seekTo rejects on a half-loaded source', async () => {
+    const { sound, stub } = await loadedHandle();
+    stub.seekTo.mockRejectedValueOnce(new Error('not seekable yet'));
+
+    await expect(sound.stopAsync()).resolves.toBeUndefined();
+
+    // Pausing is the part that matters; the rewind is best-effort.
+    expect(stub.pause).toHaveBeenCalledTimes(1);
+  });
+
+  it('setPositionAsync converts milliseconds to seconds', async () => {
+    const { sound, stub } = await loadedHandle();
+
+    await sound.setPositionAsync(5_000);
+
+    expect(stub.seekTo).toHaveBeenCalledWith(5);
+  });
+
+  it('setPositionAsync swallows a rejected seek instead of failing the caller', async () => {
+    const { sound, stub } = await loadedHandle();
+    stub.seekTo.mockRejectedValueOnce(new Error('seek failed'));
+
+    await expect(sound.setPositionAsync(1_000)).resolves.toBeUndefined();
+    expect(stub.seekTo).toHaveBeenCalledWith(1);
+  });
+
+  it('getStatusAsync maps seconds to milliseconds', async () => {
+    const { sound } = await loadedHandle((stub) => {
+      stub.currentTime = 12.5;
+      stub.duration = 90;
+    });
+
+    expect(await sound.getStatusAsync()).toEqual({
+      isLoaded: true,
+      positionMillis: 12_500,
+      durationMillis: 90_000,
+    });
+  });
+
+  it.each([
+    ['zero', 0],
+    ['infinite (live stream)', Infinity],
+    ['NaN (metadata not read yet)', NaN],
+  ])('getStatusAsync omits a %s duration', async (_label, duration) => {
+    const { sound } = await loadedHandle((stub) => {
+      stub.duration = duration;
+    });
+
+    const status = await sound.getStatusAsync();
+
+    // useAudioController clamps start cues against durationMillis; a bogus
+    // duration must read as "unknown", not as 0 or Infinity milliseconds.
+    expect(status.durationMillis).toBeUndefined();
+  });
+
+  it('unloadAsync removes the player and swallows a failing remove', async () => {
+    const { sound, stub } = await loadedHandle();
+    stub.remove.mockImplementationOnce(() => {
+      throw new Error('already removed');
+    });
+
+    await expect(sound.unloadAsync()).resolves.toBeUndefined();
+    expect(stub.remove).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves without an emitter when the runtime exposes no addListener', async () => {
+    const stub = makePlayerStub();
+    // Older runtimes and lightweight test doubles have no event emitter;
+    // createAsync must fall through rather than hang until the timeout.
+    (stub as Partial<PlayerStub>).addListener = undefined;
+    mockCreateAudioPlayer.mockReturnValue(stub);
+
+    const { sound } = await NativeSoundFactory.createAsync(1, {
+      volume: 0.4,
+      isLooping: true,
+      shouldPlay: true,
+    });
+
+    expect(sound).toBeDefined();
+    expect(stub.volume).toBe(0.4);
+    expect(stub.loop).toBe(true);
+    expect(stub.play).toHaveBeenCalledTimes(1);
+  });
+});
