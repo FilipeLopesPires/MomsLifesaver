@@ -1,6 +1,11 @@
 /**
- * Below are the colors that are used in the app. The colors are defined in the light and dark mode.
- * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
+ * The app's colour and type scale.
+ *
+ * Deliberately a single dark scheme rather than the light/dark pair from the
+ * Expo template: the UI is dark-only (see `app/_layout.tsx`, which always
+ * supplies `DarkTheme`, and `app.json`'s `userInterfaceStyle: "dark"`).
+ * Adding light-mode support means reintroducing a scheme-aware lookup here
+ * and threading it through every `Colors.*` reference.
  */
 
 export const Colors = {

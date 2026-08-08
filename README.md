@@ -263,8 +263,6 @@ The application itself lives under `src/MomsLifesaver/`:
 src/MomsLifesaver/
 ├── app/           # Expo Router screens (playlist, index, +not-found, _layout)
 ├── components/    # UI components (track cards, playback bar, slider, ...)
-│   ├── ui/        # Themed primitives (kept from the Expo template)
-│   └── unused/    # Template components not currently wired into any screen
 ├── constants/     # Theme colors, typography, track library metadata
 ├── hooks/         # React hooks (audio controller, foreground service, media session, ...)
 ├── services/      # Platform playback service, the expo-audio wrapper (native-sound), and the Web Audio wrapper (web-sound)
@@ -289,7 +287,6 @@ right file at build time based on the platform:
 | Sound wrapper (audio engine adapter)  | `services/native-sound.ts` (expo-audio / Media3) | `services/web-sound.ts` (HTMLAudioElement + Web Audio) |
 | Foreground service hook               | `hooks/use-foreground-service.ts`      | `hooks/use-foreground-service.web.ts` |
 | Playback service (notification glue)  | `services/playback-service.ts`         | `services/playback-service.web.ts`    |
-| Color scheme hook                     | `hooks/use-color-scheme.ts`            | `hooks/use-color-scheme.web.ts`       |
 
 Native audio runs on `expo-audio` (AndroidX Media3 on Android, AVAudioEngine on
 iOS), which shares a single media session with `react-native-track-player`'s

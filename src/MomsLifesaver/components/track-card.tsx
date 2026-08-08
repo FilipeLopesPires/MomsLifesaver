@@ -7,7 +7,7 @@
  * users press the icon rapidly.
  */
 import { memo, useCallback, useRef } from 'react';
-import { Image, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Image, type ImageStyle, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { CrossPlatformSlider } from '@/components/cross-platform-slider';
 
 import type { TrackMetadata } from '@/constants/tracks';
@@ -94,8 +94,11 @@ const styles = StyleSheet.create({
     width: '80%',
     height: '80%',
     alignSelf: 'center',
+    // react-native-web honours `cursor` on images at runtime, but expo's
+    // web type augmentation only adds it to ViewStyle/TextStyle - never to
+    // ImageStyle - so the cast is closing a types gap, not silencing a bug.
     ...(Platform.OS === 'web' ? { cursor: 'default' } : null),
-  },
+  } as ImageStyle,
   iconTint: {
     tintColor: Colors.textPrimary,
   },

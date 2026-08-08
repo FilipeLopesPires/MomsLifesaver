@@ -265,7 +265,8 @@ describe('WebSound - iOS background playback', () => {
     const { WebSound: Fresh } = loadFreshModule();
     new Fresh(1, { volume: 1, isLooping: false, shouldPlay: false });
     const audio = lastAudio();
-    expect(audio.playsInline).toBe(true);
+    // Typed on HTMLVideoElement only; iOS Safari honours it on audio too.
+    expect((audio as HTMLAudioElement & { playsInline?: boolean }).playsInline).toBe(true);
     expect(audio.getAttribute('playsinline')).not.toBeNull();
   });
 });

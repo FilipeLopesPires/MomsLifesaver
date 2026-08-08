@@ -10,9 +10,6 @@
     "newArchEnabled": false,
     "ios": {
       "supportsTablet": true,
-      "backgroundModes": [
-        "audio"
-      ],
       "infoPlist": {
         "UIBackgroundModes": [
           "audio"
