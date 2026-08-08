@@ -418,3 +418,22 @@ describe('unmount cleanup', () => {
     expect(mockedPlayer.reset).not.toHaveBeenCalled();
   });
 });
+
+describe('platform variant parity', () => {
+  // playlist.tsx destructures this hook's result without knowing which
+  // platform file Metro resolved. If the Android hook grows a method and the
+  // shims do not, the web and iOS builds break at runtime with a green
+  // suite. Asserted here because this file already installs every mock the
+  // Android hook needs.
+  it.each([
+    ['web', '@/hooks/use-foreground-service.web'],
+    ['ios', '@/hooks/use-foreground-service.ios'],
+  ])('the %s shim returns the same keys as the Android hook', (_platform, modulePath) => {
+    const shim = require(modulePath).useForegroundService as typeof useForegroundService;
+
+    const android = renderHook(() => useForegroundService(callbacks())).result.current;
+    const variant = renderHook(() => shim(callbacks())).result.current;
+
+    expect(Object.keys(variant).sort()).toEqual(Object.keys(android).sort());
+  });
+});

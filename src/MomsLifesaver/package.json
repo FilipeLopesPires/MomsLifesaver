@@ -40,7 +40,7 @@
     "react-native-reanimated": "~3.17.4",
     "react-native-safe-area-context": "5.4.0",
     "react-native-screens": "~4.11.1",
-    "react-native-track-player": "github:megamaxs1234/react-native-track-player",
+    "react-native-track-player": "github:megamaxs1234/react-native-track-player#78bd5cfd48abfab98a7795610fa9c6dd9b7748f8",
     "react-native-web": "^0.20.0"
   },
   "jest": {
