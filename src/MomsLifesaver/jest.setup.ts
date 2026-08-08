@@ -24,6 +24,13 @@ type MockAudioContext = {
   resume: jest.Mock<Promise<void>, []>;
   createGain: jest.Mock<MockGainNode, []>;
   createMediaElementSource: jest.Mock<MockMediaElementSource, [HTMLAudioElement]>;
+  // Present but never expected to be called: WebSound must stream through
+  // <audio>, not decode whole files into memory. Defined as spies (rather
+  // than left undefined) so the tests can assert they were NOT called - an
+  // assertion against `undefined` would hold no matter what WebSound did.
+  decodeAudioData: jest.Mock;
+  createBuffer: jest.Mock;
+  createBufferSource: jest.Mock;
 };
 
 type AudioMocks = {
@@ -58,6 +65,9 @@ const makeAudioContext = (): MockAudioContext => {
       audioMocks.sourceNodes.push(node);
       return node;
     }),
+    decodeAudioData: jest.fn(),
+    createBuffer: jest.fn(),
+    createBufferSource: jest.fn(),
   };
   audioMocks.instances.push(instance);
   return instance;
@@ -95,6 +105,15 @@ installAudioContext();
 
 (globalThis as unknown as { __installAudioContext: () => void }).__installAudioContext =
   installAudioContext;
+
+/**
+ * React Native's `__DEV__` global is injected by `react-native/jest/setup.js`,
+ * which only the `jest-expo` preset pulls in - i.e. only the "native" project.
+ * The "web" project runs plain jsdom, so anything importing `utils/logger`
+ * (nearly every suite) would throw `ReferenceError: __DEV__ is not defined`.
+ * Define it here so both projects agree.
+ */
+(globalThis as unknown as { __DEV__: boolean }).__DEV__ = true;
 
 // jsdom's HTMLAudioElement.play is not implemented. Stub it.
 if (typeof HTMLMediaElement !== 'undefined') {

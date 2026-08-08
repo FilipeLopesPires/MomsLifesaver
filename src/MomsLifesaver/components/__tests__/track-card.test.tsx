@@ -8,7 +8,7 @@
  */
 
 import React from 'react';
-import { Image, TouchableOpacity } from 'react-native';
+import { Image, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { fireEvent, render, screen } from '@testing-library/react-native';
 
 jest.mock('@/components/cross-platform-slider', () => {
@@ -77,6 +77,38 @@ describe('TrackCard rendering', () => {
     renderCard({ isSelected: true, volume: 0.73 });
     expect(screen.getByTestId('mock-slider')).toBeTruthy();
     expect(screen.getByTestId('mock-slider-value').children[0]).toBe('value:0.73');
+  });
+
+  it('reserves a fixed-height slider slot in both selection states so siblings do not shift and the slider stays tappable', () => {
+    const props = {
+      track: makeTrack(),
+      isSelected: false,
+      volume: 0.5,
+      onPress: jest.fn(),
+      onVolumeChange: jest.fn(),
+    };
+    const { rerender } = render(<TrackCard {...props} />);
+
+    const findSlotHeight = () => {
+      const slot = screen
+        .UNSAFE_getAllByType(View)
+        .map((node) => StyleSheet.flatten(node.props.style))
+        .find(
+          (style) =>
+            typeof style?.height === 'number' &&
+            style.height > 0 &&
+            style?.paddingHorizontal === 4,
+        );
+      return slot?.height as number | undefined;
+    };
+
+    const unselectedHeight = findSlotHeight();
+    expect(unselectedHeight).toBeGreaterThan(0);
+
+    rerender(<TrackCard {...props} isSelected={true} />);
+
+    const selectedHeight = findSlotHeight();
+    expect(selectedHeight).toBe(unselectedHeight);
   });
 });
 

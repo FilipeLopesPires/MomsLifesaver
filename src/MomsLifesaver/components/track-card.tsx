@@ -7,11 +7,11 @@
  * users press the icon rapidly.
  */
 import { memo, useCallback, useRef } from 'react';
-import { Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Image, type ImageStyle, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { CrossPlatformSlider } from '@/components/cross-platform-slider';
 
 import type { TrackMetadata } from '@/constants/tracks';
-import { Colors, Typography } from '@/constants/theme';
+import { Colors } from '@/constants/theme';
 
 const PRESS_DEBOUNCE_MS = 300;
 
@@ -43,7 +43,7 @@ const TrackCardComponent = ({ track, isSelected, volume, onPress, onVolumeChange
   );
 
   return (
-    <View style={[styles.container, isSelected && styles.containerSelected]}>
+    <View style={styles.container}>
         <View style={styles.cardContainer}>
             <TouchableOpacity
                 activeOpacity={0.85}
@@ -54,28 +54,20 @@ const TrackCardComponent = ({ track, isSelected, volume, onPress, onVolumeChange
                 <Image source={track.iconModule} style={[styles.icon, styles.iconTint]} resizeMode="cover" />
                 {isSelected ? <View pointerEvents="none" style={styles.selectionOutline} /> : null}
             </TouchableOpacity>
+        </View>
+        <View style={styles.sliderSlot}>
             {isSelected ? (
-                <View style={styles.sliderSection}>
-                    <View></View>
-                    {/*
-                    <View style={styles.sliderHeader}>
-                        <Text style={styles.sliderLabel}>Volume</Text>
-                        <Text style={styles.sliderValue}>{`${Math.round(volume * 100)}%`}</Text>
-                    </View>
-                    */}
-                    <CrossPlatformSlider
-                        value={volume}
-                        minimumValue={0}
-                        maximumValue={1}
-                        onValueChange={handleVolumeChange}
-                        minimumTrackTintColor={Colors.accent}
-                        maximumTrackTintColor={Colors.border}
-                        thumbTintColor={Colors.accent}
-                    />
-                </View>
+                <CrossPlatformSlider
+                    value={volume}
+                    minimumValue={0}
+                    maximumValue={1}
+                    onValueChange={handleVolumeChange}
+                    minimumTrackTintColor={Colors.accent}
+                    maximumTrackTintColor={Colors.border}
+                    thumbTintColor={Colors.accent}
+                />
             ) : null}
         </View>
-        {isSelected ? null : (<View style={styles.sliderEmptySection}></View>)}
     </View>
   );
 };
@@ -91,9 +83,6 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     backgroundColor: Colors.surface,
   },
-  containerSelected: {
-    paddingBottom: 20,
-  },
   iconWrapper: {
     width: '100%',
     aspectRatio: 1,
@@ -105,8 +94,11 @@ const styles = StyleSheet.create({
     width: '80%',
     height: '80%',
     alignSelf: 'center',
+    // react-native-web honours `cursor` on images at runtime, but expo's
+    // web type augmentation only adds it to ViewStyle/TextStyle - never to
+    // ImageStyle - so the cast is closing a types gap, not silencing a bug.
     ...(Platform.OS === 'web' ? { cursor: 'default' } : null),
-  },
+  } as ImageStyle,
   iconTint: {
     tintColor: Colors.textPrimary,
   },
@@ -116,26 +108,10 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderColor: Colors.borderActive,
   },
-  sliderSection: {
-    paddingLeft: 4,
-    paddingRight: 4,
-    gap: 8,
-    height: 0,
-  },
-  sliderEmptySection: {
-    height: 10,
-  },
-  sliderHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  sliderLabel: {
-    ...Typography.hint,
-  },
-  sliderValue: {
-    ...Typography.hint,
-    color: Colors.textSecondary,
+  sliderSlot: {
+    height: 15,
+    paddingHorizontal: 4,
+    justifyContent: 'center',
   },
 });
 

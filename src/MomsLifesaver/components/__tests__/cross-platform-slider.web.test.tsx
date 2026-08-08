@@ -109,4 +109,60 @@ describe('CrossPlatformSlider (web)', () => {
     expect(background).toContain('#222222');
     expect(background).toContain('25%');
   });
+
+  describe('thumb style scoping', () => {
+    const classNameOf = (tree: unknown) => findByType(tree, 'input')!.props.className as string;
+
+    it('uses a class name that is valid in a CSS selector', () => {
+      const { toJSON } = render(
+        <CrossPlatformSlider value={0.4} minimumValue={0} maximumValue={1} />,
+      );
+
+      // React's useId yields ids containing ':', which would silently break
+      // the injected `.<id>::-webkit-slider-thumb` rule.
+      expect(classNameOf(toJSON())).toMatch(/^slider-[A-Za-z0-9_-]+$/);
+    });
+
+    it('keeps the class name stable across re-renders', () => {
+      const { toJSON, rerender } = render(
+        <CrossPlatformSlider value={0.4} minimumValue={0} maximumValue={1} />,
+      );
+      const first = classNameOf(toJSON());
+
+      rerender(<CrossPlatformSlider value={0.9} minimumValue={0} maximumValue={1} />);
+
+      // A per-render id (the old Math.random version) rewrote the <style>
+      // block and swapped className on every drag tick, forcing a CSS recalc
+      // per pointer event, and made render impure.
+      expect(classNameOf(toJSON())).toBe(first);
+    });
+
+    it('scopes the injected style block to that same class', () => {
+      const { toJSON } = render(
+        <CrossPlatformSlider value={0.4} minimumValue={0} maximumValue={1} />,
+      );
+      const className = classNameOf(toJSON());
+      const style = findByType(toJSON(), 'style')!;
+      const css = String(style.children);
+
+      expect(css).toContain(`.${className}::-webkit-slider-thumb`);
+      expect(css).toContain(`.${className}::-moz-range-thumb`);
+    });
+
+    it('gives two sliders on the same screen distinct class names', () => {
+      const { toJSON } = render(
+        <>
+          <CrossPlatformSlider value={0.2} minimumValue={0} maximumValue={1} />
+          <CrossPlatformSlider value={0.8} minimumValue={0} maximumValue={1} />
+        </>,
+      );
+      const tree = toJSON() as unknown as unknown[];
+
+      const first = classNameOf(tree[0]);
+      const second = classNameOf(tree[1]);
+
+      // Per-track sliders must not share a rule, or restyling one restyles all.
+      expect(first).not.toBe(second);
+    });
+  });
 });

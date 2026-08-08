@@ -7,6 +7,9 @@
  * `TRACK_MAP`.
  */
 
+import fs from 'fs';
+import path from 'path';
+
 import { TRACK_LIBRARY, TRACK_MAP, type TrackId } from '../tracks';
 import { parseStartTime } from '../../utils/start-time';
 
@@ -35,15 +38,9 @@ describe('TRACK_LIBRARY', () => {
     expect(actual).toEqual(expected);
   });
 
-  it.each(EXPECTED_TRACK_IDS)(
-    'track "%s" has truthy audioModule and iconModule',
-    (id) => {
-      const track = TRACK_LIBRARY.find((candidate) => candidate.id === id);
-      expect(track).toBeDefined();
-      expect(track!.audioModule).toBeTruthy();
-      expect(track!.iconModule).toBeTruthy();
-    },
-  );
+  it.each(EXPECTED_TRACK_IDS)('track "%s" is present in the library', (id) => {
+    expect(TRACK_LIBRARY.find((candidate) => candidate.id === id)).toBeDefined();
+  });
 
   it.each(EXPECTED_TRACK_IDS)(
     'track "%s" has defaultVolume in [0, 1]',
@@ -68,6 +65,29 @@ describe('TRACK_LIBRARY', () => {
       expect(typeof track.title).toBe('string');
       expect(track.title.length).toBeGreaterThan(0);
     }
+  });
+});
+
+/**
+ * Asset imports cannot be checked through TRACK_LIBRARY: `__mocks__/asset-stub.js`
+ * resolves every `.mp3` / `.m4a` / `.png` to the literal `1`, so asserting that
+ * `audioModule` is truthy passes even for a file that has been deleted from
+ * disk - which Metro would then fail on at bundle time. Read the import
+ * specifiers out of the source instead and check the real filesystem.
+ */
+describe('track assets exist on disk', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../tracks.ts'), 'utf8');
+  const assetSpecifiers = [...source.matchAll(/from '(\.\.\/assets\/[^']+)'/g)].map(
+    (match) => match[1],
+  );
+
+  it('imports one asset per audio track plus its icons', () => {
+    // 7 audio files + 6 icons (the two shush tracks share one icon).
+    expect(assetSpecifiers).toHaveLength(13);
+  });
+
+  it.each(assetSpecifiers)('%s resolves to a real file', (relativePath) => {
+    expect(fs.existsSync(path.resolve(__dirname, '..', relativePath))).toBe(true);
   });
 });
 

@@ -1,13 +1,16 @@
 /**
- * Tests for hooks/use-audio-controller.ts (Batch 1).
+ * Tests for hooks/use-audio-controller.ts.
  *
  * Covers the brain of the app: load lifecycle, toggleTrack state machine,
  * volume multiplication invariants, selection-scoped operations, and the
- * load-resilience / unmount-safety contracts.
+ * unmount-safety contract.
  *
  * We mock every heavy leaf dependency at module scope so the test keeps
  * running in the jsdom environment without pulling in real react-native,
- * expo-av, or the Web Audio service.
+ * expo-audio, or the Web Audio service. The native-sound factory is
+ * mocked to return a plain SoundHandle-shaped object so the tests can
+ * observe the controller's behaviour without caring about the
+ * underlying `expo-audio` AudioPlayer instance.
  */
 
 jest.mock('react-native', () => ({
@@ -17,17 +20,17 @@ jest.mock('react-native', () => ({
   },
 }));
 
-jest.mock('expo-av', () => ({
-  Audio: {
-    setAudioModeAsync: jest.fn().mockResolvedValue(undefined),
-    Sound: { createAsync: jest.fn() },
-  },
-  InterruptionModeIOS: { DuckOthers: 1 },
-  InterruptionModeAndroid: { DuckOthers: 1 },
+jest.mock('expo-audio', () => ({
+  setAudioModeAsync: jest.fn().mockResolvedValue(undefined),
+  createAudioPlayer: jest.fn(),
 }));
 
 jest.mock('@/services/web-sound', () => ({
   WebSoundFactory: { createAsync: jest.fn() },
+}));
+
+jest.mock('@/services/native-sound', () => ({
+  NativeSoundFactory: { createAsync: jest.fn() },
 }));
 
 jest.mock('@/utils/logger', () => ({
@@ -37,10 +40,17 @@ jest.mock('@/utils/logger', () => ({
 }));
 
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { Audio } from 'expo-av';
+import { Platform } from 'react-native';
+import { setAudioModeAsync } from 'expo-audio';
 
 import { TRACK_LIBRARY, type TrackId } from '@/constants/tracks';
 import { useAudioController } from '@/hooks/use-audio-controller';
+import { NativeSoundFactory } from '@/services/native-sound';
+import { WebSoundFactory } from '@/services/web-sound';
+
+type MutablePlatform = { OS: 'ios' | 'android' | 'web' };
+const mutablePlatform = Platform as unknown as MutablePlatform;
+const mockedSetAudioMode = setAudioModeAsync as unknown as jest.Mock;
 
 type MockHandle = {
   playAsync: jest.Mock;
@@ -66,7 +76,8 @@ const makeHandle = (): MockHandle => ({
   unloadAsync: jest.fn().mockResolvedValue(undefined),
 });
 
-const createAsync = Audio.Sound.createAsync as unknown as jest.Mock;
+const createAsync = NativeSoundFactory.createAsync as unknown as jest.Mock;
+const webCreateAsync = WebSoundFactory.createAsync as unknown as jest.Mock;
 
 type LoadHooks = {
   rejectFor: Set<TrackId>;
@@ -75,6 +86,25 @@ type LoadHooks = {
 };
 
 let load: LoadHooks;
+// Tracks dispatch order independently of which factory was called, so the
+// fixture keeps working when a test flips Platform.OS to 'web'. Reading
+// `createAsync.mock.calls.length` instead would silently mis-map track ids
+// the moment a second factory is in play.
+let loadCallCount = 0;
+
+const loadImplementation = async () => {
+  const trackId = TRACK_LIBRARY[loadCallCount].id;
+  loadCallCount += 1;
+  if (load.deferred) {
+    await load.deferred.promise;
+  }
+  if (load.rejectFor.has(trackId)) {
+    throw new Error(`simulated load failure: ${trackId}`);
+  }
+  const handle = makeHandle();
+  load.handles.set(trackId, handle);
+  return { sound: handle };
+};
 
 beforeEach(() => {
   load = {
@@ -82,20 +112,15 @@ beforeEach(() => {
     deferred: null,
     handles: new Map(),
   };
+  loadCallCount = 0;
+  mutablePlatform.OS = 'ios';
+  // Module-factory jest.fn()s are not spies, so `restoreMocks` leaves their
+  // recorded calls in place; clear explicitly.
+  mockedSetAudioMode.mockClear();
   createAsync.mockReset();
-  createAsync.mockImplementation(async () => {
-    const callIndex = createAsync.mock.calls.length - 1;
-    const trackId = TRACK_LIBRARY[callIndex].id;
-    if (load.deferred) {
-      await load.deferred.promise;
-    }
-    if (load.rejectFor.has(trackId)) {
-      throw new Error(`simulated load failure: ${trackId}`);
-    }
-    const handle = makeHandle();
-    load.handles.set(trackId, handle);
-    return { sound: handle };
-  });
+  createAsync.mockImplementation(loadImplementation);
+  webCreateAsync.mockReset();
+  webCreateAsync.mockImplementation(loadImplementation);
 });
 
 const getHandle = (id: TrackId): MockHandle => {
@@ -165,6 +190,159 @@ describe('loadAsync', () => {
       }
     });
   });
+
+  it('unloads every sound when the hook unmounts after a successful load', async () => {
+    const view = await mount();
+    expect(load.handles.size).toBe(TRACK_LIBRARY.length);
+
+    view.unmount();
+
+    // Without the unmount cleanup these handles outlive the hook, each
+    // holding an open native player (or <audio> element on web).
+    await waitFor(() => {
+      for (const handle of load.handles.values()) {
+        expect(handle.unloadAsync).toHaveBeenCalledTimes(1);
+      }
+    });
+  });
+
+  it('unloads the survivors even when one track failed to load', async () => {
+    load.rejectFor.add('rain');
+    const view = await mount();
+
+    view.unmount();
+
+    await waitFor(() => {
+      for (const handle of load.handles.values()) {
+        expect(handle.unloadAsync).toHaveBeenCalledTimes(1);
+      }
+    });
+    expect(load.handles.has('rain')).toBe(false);
+  });
+
+  it('still unloads the rest when one sound rejects while unloading', async () => {
+    const view = await mount();
+    getHandle('rain').unloadAsync.mockRejectedValueOnce(new Error('remove failed'));
+
+    expect(() => view.unmount()).not.toThrow();
+
+    // Promise.all would abandon the batch at the first rejection; every
+    // handle after it would leak.
+    await waitFor(() => {
+      for (const handle of load.handles.values()) {
+        expect(handle.unloadAsync).toHaveBeenCalledTimes(1);
+      }
+    });
+  });
+});
+
+describe('callback identity stability', () => {
+  // TrackGrid and TrackCard are memo()'d, and playlist.tsx threads these
+  // callbacks down as props. If any of them is recreated when playback state
+  // changes, memo is defeated and every tile re-renders on every volume tick.
+  // These are stable only because the hook reads state through a ref; adding
+  // `state.tracks` back to a dependency array fails this test.
+  const CALLBACKS = [
+    'toggleTrack',
+    'stopTrack',
+    'setTrackVolume',
+    'setGlobalVolume',
+    'pauseSelectedTracks',
+    'playSelectedTracks',
+    'toggleSelectedTracksPlayPause',
+  ] as const;
+
+  it('keeps every callback identity stable across a playback state change', async () => {
+    const { result } = await mount();
+    const before = { ...result.current };
+
+    await act(async () => {
+      await result.current.toggleTrack('rain');
+    });
+    // Confirm state really did change, or the assertion below proves nothing.
+    expect(result.current.tracks['rain'].isPlaying).toBe(true);
+
+    for (const name of CALLBACKS) {
+      expect(result.current[name]).toBe(before[name]);
+    }
+  });
+
+  it('keeps every callback identity stable across a volume change', async () => {
+    const { result } = await mount();
+    const before = { ...result.current };
+
+    await act(async () => {
+      await result.current.setGlobalVolume(0.25);
+    });
+    expect(result.current.globalVolume).toBe(0.25);
+
+    for (const name of CALLBACKS) {
+      expect(result.current[name]).toBe(before[name]);
+    }
+  });
+
+  it('still exposes fresh track state despite the stable callbacks', async () => {
+    const { result } = await mount();
+
+    await act(async () => {
+      await result.current.setTrackVolume('rain', 0.5);
+    });
+
+    // The ref must not make the rendered view stale.
+    expect(result.current.tracks['rain'].volume).toBe(0.5);
+  });
+});
+
+describe('audio session configuration (background playback contract)', () => {
+  // Background playback is the entire point of the app, and it is configured
+  // by exactly one call. The expo-av -> expo-audio migration renamed every
+  // key (staysActiveInBackground -> shouldPlayInBackground, ...) and turned
+  // the interruption enums into string literals. A typo here produces an app
+  // that stops the moment it is backgrounded, with no crash and no failing
+  // test - so these assertions are deliberately exact.
+  it('configures the session with exactly the expo-audio key set', async () => {
+    await mount();
+
+    expect(mockedSetAudioMode).toHaveBeenCalledTimes(1);
+    // Whole-object equality: a MISSING key and a stray EXTRA key both fail.
+    // objectContaining would let a leftover expo-av key through.
+    expect(mockedSetAudioMode).toHaveBeenCalledWith({
+      playsInSilentMode: true,
+      shouldPlayInBackground: true,
+      interruptionMode: 'duckOthers',
+      interruptionModeAndroid: 'duckOthers',
+      allowsRecording: false,
+      shouldRouteThroughEarpiece: false,
+    });
+  });
+
+  it('passes no legacy expo-av audio-mode keys', async () => {
+    await mount();
+
+    const mode = mockedSetAudioMode.mock.calls[0][0];
+    for (const legacyKey of [
+      'staysActiveInBackground',
+      'playsInSilentModeIOS',
+      'interruptionModeIOS',
+      'allowsRecordingIOS',
+      'playThroughEarpieceAndroid',
+      'shouldDuckAndroid',
+    ]) {
+      expect(mode).not.toHaveProperty(legacyKey);
+    }
+  });
+
+  it('does not configure a native audio session on web', async () => {
+    mutablePlatform.OS = 'web';
+
+    await mount();
+
+    // Web volume/routing is owned by WebSound; there is no native session to
+    // configure and calling into expo-audio there would throw.
+    expect(mockedSetAudioMode).not.toHaveBeenCalled();
+    expect(webCreateAsync).toHaveBeenCalledTimes(TRACK_LIBRARY.length);
+    expect(createAsync).not.toHaveBeenCalled();
+  });
 });
 
 describe('toggleTrack: start-stopped branch', () => {
@@ -184,17 +362,42 @@ describe('toggleTrack: start-stopped branch', () => {
     expect(result.current.tracks['rain'].isPaused).toBe(false);
   });
 
-  it('honours a parsed startTime from the track library', async () => {
-    jest.spyOn(Math, 'random').mockReturnValue(0); // pick first entry ("00:22")
-    const { result } = await mount();
-    const handle = getHandle('kalimba');
-
-    await act(async () => {
-      await result.current.toggleTrack('kalimba');
+  describe('random cue selection', () => {
+    // The index arithmetic is startTimes[floor(random * length)]. Probing it
+    // only at random = 0 would pass even if it were hardcoded to
+    // startTimes[0], so each row below pins a different index. If a cue point
+    // is ever added to kalimba these expectations shift - that is deliberate,
+    // and the length assertion makes the reason obvious.
+    it('kalimba still has the 19 cue points these rows are derived from', () => {
+      const kalimba = TRACK_LIBRARY.find((track) => track.id === 'kalimba');
+      expect(kalimba?.startTimes).toHaveLength(19);
     });
 
-    expect(handle.setPositionAsync).toHaveBeenCalledWith(22_000);
-    (Math.random as jest.Mock).mockRestore();
+    it.each([
+      [0, 0, 22_000], // "00:22"
+      [0.1, 1, 108_000], // "01:48"
+      [0.5, 9, 1_350_000], // "22:30"
+      [0.9999, 18, 2_600_000], // "43:20" - last entry, must not run past the end
+    ])(
+      'random=%p selects startTimes[%i] -> %i ms',
+      async (random, _index, expectedMillis) => {
+        jest.spyOn(Math, 'random').mockReturnValue(random);
+        const { result } = await mount();
+        const handle = getHandle('kalimba');
+        // Long enough that no candidate trips the >= durationMillis clamp.
+        handle.getStatusAsync.mockResolvedValue({
+          isLoaded: true,
+          positionMillis: 0,
+          durationMillis: 3_000_000,
+        });
+
+        await act(async () => {
+          await result.current.toggleTrack('kalimba');
+        });
+
+        expect(handle.setPositionAsync).toHaveBeenCalledWith(expectedMillis);
+      },
+    );
   });
 
   it('falls back to position 0 when the parsed startTime is >= durationMillis', async () => {
@@ -212,7 +415,6 @@ describe('toggleTrack: start-stopped branch', () => {
     });
 
     expect(handle.setPositionAsync).toHaveBeenCalledWith(0);
-    (Math.random as jest.Mock).mockRestore();
   });
 
   it('keeps the parsed position when getStatusAsync reports unloaded', async () => {
@@ -226,7 +428,6 @@ describe('toggleTrack: start-stopped branch', () => {
     });
 
     expect(handle.setPositionAsync).toHaveBeenCalledWith(22_000);
-    (Math.random as jest.Mock).mockRestore();
   });
 });
 
@@ -429,7 +630,6 @@ describe('selection-scoped operations', () => {
 
     expect(kalimba.setPositionAsync).toHaveBeenCalledWith(22_000);
     expect(kalimba.playAsync).toHaveBeenCalledTimes(1);
-    (Math.random as jest.Mock).mockRestore();
   });
 
   it('playSelectedTracks continues from the current position when positionMillis > 0', async () => {

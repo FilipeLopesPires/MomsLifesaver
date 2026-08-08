@@ -66,6 +66,11 @@ const TrackGridComponent = ({
     [onTrackPress, onTrackVolumeChange, selectedTrackIds, volumes],
   );
 
+  const extraData = useMemo(
+    () => ({ selectedTrackIds, volumes }),
+    [selectedTrackIds, volumes],
+  );
+
   return (
     <FlatList
       data={paddedData}
@@ -76,7 +81,11 @@ const TrackGridComponent = ({
       ListHeaderComponent={ListHeaderComponent ?? undefined}
       renderItem={renderItem}
       showsVerticalScrollIndicator={false}
-      extraData={selectedTrackIds}
+      // Both are read inside renderItem, so both must invalidate the cells.
+      // Omitting `volumes` was masked only because renderItem's identity used
+      // to change on every render; now that it is stable, leaving it out
+      // would stop per-track volume changes from repainting the sliders.
+      extraData={extraData}
     />
   );
 };

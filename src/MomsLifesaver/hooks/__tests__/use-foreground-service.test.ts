@@ -1,15 +1,22 @@
 /**
- * Tests for hooks/use-foreground-service.ts (Batch 5).
+ * Tests for hooks/use-foreground-service.ts.
  *
  * Android-only notification/service lifecycle. Guards:
  *   - No-ops on non-Android.
+ *   - Setup is LAZY: TrackPlayer.setupPlayer only runs the first time a
+ *     caller invokes startService/updateMetadata (never on mount).
  *   - Setup installs the silent "holding" track (volume 0, duration 0, loop).
  *   - start/stop service guard rails.
- *   - updateMetadata debouncing on identical (title, artist, isPlaying).
- *   - updateMetadata resyncs the TrackPlayer play/pause state so the
- *     notification's Play/Pause icon matches the real audio state.
+ *   - updateMetadata uses TrackPlayer.updateNowPlayingMetadata and does
+ *     NOT call reset/add: the silent queue is kept intact so expo-audio
+ *     does not lose AudioFocus while the user adds/removes tracks.
+ *   - updateMetadata is debounced on identical (title, artist, isPlaying).
+ *   - updateMetadata NEVER drives TrackPlayer's transport. KotlinAudio
+ *     requests AUDIOFOCUS_GAIN whenever its player starts, and expo-audio
+ *     pauses every player it owns on the resulting AUDIOFOCUS_LOSS, so a
+ *     play() here silenced the real audio once per track selection.
  *   - DeviceEventEmitter subscription uses the latest callbacks ref.
- *   - Unmount resets TrackPlayer.
+ *   - Unmount resets TrackPlayer only if setup actually ran.
  */
 
 jest.mock('react-native', () => ({
@@ -31,6 +38,7 @@ jest.mock('react-native-track-player', () => ({
     play: jest.fn().mockResolvedValue(undefined),
     pause: jest.fn().mockResolvedValue(undefined),
     reset: jest.fn().mockResolvedValue(undefined),
+    updateNowPlayingMetadata: jest.fn().mockResolvedValue(undefined),
     addEventListener: jest.fn(() => ({ remove: jest.fn() })),
     registerPlaybackService: jest.fn(),
   },
@@ -72,6 +80,7 @@ const mockedPlayer = TrackPlayer as unknown as {
   play: jest.Mock;
   pause: jest.Mock;
   reset: jest.Mock;
+  updateNowPlayingMetadata: jest.Mock;
   addEventListener: jest.Mock;
   registerPlaybackService: jest.Mock;
 };
@@ -80,12 +89,26 @@ const mockedAddListener = DeviceEventEmitter.addListener as unknown as jest.Mock
 
 const callbacks = () => ({ onTogglePlayPause: jest.fn() });
 
+// Mounts the hook and triggers lazy setup by calling startService once,
+// matching how the playlist screen actually exercises the service.
 const mountAndWaitForSetup = async (cb = callbacks()) => {
   const view = renderHook(({ callbacks: c }) => useForegroundService(c), {
     initialProps: { callbacks: cb },
   });
+  await act(async () => {
+    await view.result.current.startService();
+  });
   await waitFor(() => {
     expect(mockedPlayer.setVolume).toHaveBeenCalledWith(0);
+  });
+  return { view, cb };
+};
+
+// Mounts the hook without triggering setup, for tests that exercise the
+// lazy-init contract itself.
+const mountWithoutSetup = (cb = callbacks()) => {
+  const view = renderHook(({ callbacks: c }) => useForegroundService(c), {
+    initialProps: { callbacks: cb },
   });
   return { view, cb };
 };
@@ -116,11 +139,26 @@ describe('non-Android platforms', () => {
     expect(mockedPlayer.play).not.toHaveBeenCalled();
     expect(mockedPlayer.pause).not.toHaveBeenCalled();
     expect(mockedPlayer.reset).not.toHaveBeenCalled();
+    expect(mockedPlayer.updateNowPlayingMetadata).not.toHaveBeenCalled();
   });
 });
 
 describe('setup', () => {
-  it('configures TrackPlayer with the silent holding track (duration 0, volume 0, loop)', async () => {
+  it('does NOT run setup on mount (lazy init)', async () => {
+    mountWithoutSetup();
+
+    // Flush any microtasks so we're sure nothing queued on mount has fired.
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockedPlayer.setupPlayer).not.toHaveBeenCalled();
+    expect(mockedPlayer.updateOptions).not.toHaveBeenCalled();
+    expect(mockedPlayer.add).not.toHaveBeenCalled();
+    expect(mockedPlayer.setVolume).not.toHaveBeenCalled();
+  });
+
+  it('configures TrackPlayer with the silent holding track on the first startService() call', async () => {
     await mountAndWaitForSetup();
 
     expect(mockedPlayer.setupPlayer).toHaveBeenCalledTimes(1);
@@ -139,6 +177,17 @@ describe('setup', () => {
     expect(mockedPlayer.setVolume).toHaveBeenCalledWith(0);
   });
 
+  it('also runs setup lazily from the first updateMetadata() call', async () => {
+    const { view } = mountWithoutSetup();
+
+    await act(async () => {
+      await view.result.current.updateMetadata('Rain', 'Playing', true);
+    });
+
+    expect(mockedPlayer.setupPlayer).toHaveBeenCalledTimes(1);
+    expect(mockedPlayer.setVolume).toHaveBeenCalledWith(0);
+  });
+
   it('does not re-run setup across re-renders of the same mount', async () => {
     const { view } = await mountAndWaitForSetup();
 
@@ -149,41 +198,93 @@ describe('setup', () => {
     expect(mockedPlayer.add).toHaveBeenCalledTimes(1);
   });
 
+  it('dedupes concurrent setup calls so setupPlayer runs once', async () => {
+    const { view } = mountWithoutSetup();
+
+    await act(async () => {
+      await Promise.all([
+        view.result.current.startService(),
+        view.result.current.startService(),
+        view.result.current.updateMetadata('Rain', 'Playing', true),
+      ]);
+    });
+
+    expect(mockedPlayer.setupPlayer).toHaveBeenCalledTimes(1);
+  });
+
   it('surfaces setup errors via handleError and leaves the service uninitialised', async () => {
     mockedPlayer.setupPlayer.mockRejectedValueOnce(new Error('boom'));
 
     const { result } = renderHook(() => useForegroundService(callbacks()));
 
-    await waitFor(() => {
-      expect(handleError).toHaveBeenCalled();
-    });
-
-    mockedPlayer.play.mockClear();
     await act(async () => {
       await result.current.startService();
     });
+
+    expect(handleError).toHaveBeenCalled();
+    // Discriminating assertion: stopService() early-returns on
+    // !isServiceRunning regardless of whether setup failed, so asserting
+    // only on `pause` would pass even if setup had succeeded. `play` is
+    // reached only when ensureInitialized() returned true.
     expect(mockedPlayer.play).not.toHaveBeenCalled();
+
+    mockedPlayer.play.mockClear();
+    await act(async () => {
+      await result.current.stopService();
+    });
+    expect(mockedPlayer.pause).not.toHaveBeenCalled();
+  });
+
+  it('retries setup on a later startService() after the first attempt failed', async () => {
+    mockedPlayer.setupPlayer.mockRejectedValueOnce(new Error('boom'));
+    const { view } = mountWithoutSetup();
+
+    await act(async () => {
+      await view.result.current.startService();
+    });
+    expect(mockedPlayer.setupPlayer).toHaveBeenCalledTimes(1);
+    expect(mockedPlayer.play).not.toHaveBeenCalled();
+
+    // The cached rejected promise must NOT be reused: without the
+    // `setupPromiseRef.current = null` reset on failure, one transient error
+    // would leave the notification permanently dead for the whole session.
+    await act(async () => {
+      await view.result.current.startService();
+    });
+
+    expect(mockedPlayer.setupPlayer).toHaveBeenCalledTimes(2);
+    expect(mockedPlayer.setVolume).toHaveBeenCalledWith(0);
+    expect(mockedPlayer.play).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries setup from updateMetadata() too, not just startService()', async () => {
+    mockedPlayer.setupPlayer.mockRejectedValueOnce(new Error('boom'));
+    const { view } = mountWithoutSetup();
+
+    await act(async () => {
+      await view.result.current.updateMetadata('Rain', 'Playing', true);
+    });
+    expect(mockedPlayer.updateNowPlayingMetadata).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await view.result.current.updateMetadata('Rain', 'Playing', true);
+    });
+
+    expect(mockedPlayer.setupPlayer).toHaveBeenCalledTimes(2);
+    expect(mockedPlayer.updateNowPlayingMetadata).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('startService', () => {
   it('plays the holding track on the happy path', async () => {
-    const { view } = await mountAndWaitForSetup();
-
-    mockedPlayer.play.mockClear();
-    await act(async () => {
-      await view.result.current.startService();
-    });
+    // mountAndWaitForSetup already calls startService to trigger lazy setup.
+    await mountAndWaitForSetup();
 
     expect(mockedPlayer.play).toHaveBeenCalledTimes(1);
   });
 
   it('is a no-op when the service is already running', async () => {
     const { view } = await mountAndWaitForSetup();
-
-    await act(async () => {
-      await view.result.current.startService();
-    });
     mockedPlayer.play.mockClear();
 
     await act(async () => {
@@ -210,8 +311,8 @@ describe('stopService', () => {
     expect(mockedPlayer.pause).toHaveBeenCalledTimes(1);
   });
 
-  it('is a no-op when the service was never started', async () => {
-    const { view } = await mountAndWaitForSetup();
+  it('is a no-op when the service was never started (lazy setup never ran)', async () => {
+    const { view } = mountWithoutSetup();
 
     mockedPlayer.pause.mockClear();
     await act(async () => {
@@ -219,15 +320,17 @@ describe('stopService', () => {
     });
 
     expect(mockedPlayer.pause).not.toHaveBeenCalled();
+    expect(mockedPlayer.setupPlayer).not.toHaveBeenCalled();
   });
 });
 
 describe('updateMetadata', () => {
-  it('replaces the holding track and plays when isAudioPlaying=true', async () => {
+  it('updates the now-playing metadata in place and plays when isAudioPlaying=true', async () => {
     const { view } = await mountAndWaitForSetup();
 
     mockedPlayer.reset.mockClear();
     mockedPlayer.add.mockClear();
+    mockedPlayer.updateNowPlayingMetadata.mockClear();
     mockedPlayer.play.mockClear();
     mockedPlayer.pause.mockClear();
 
@@ -235,31 +338,45 @@ describe('updateMetadata', () => {
       await view.result.current.updateMetadata('Rain', 'Playing', true);
     });
 
-    expect(mockedPlayer.reset).toHaveBeenCalledTimes(1);
-    expect(mockedPlayer.add).toHaveBeenCalledWith(
+    // Non-destructive path: no reset, no re-add of the silent track.
+    // Tearing the queue down here would re-request AudioFocus and
+    // disturb the expo-audio players that are producing the real audio.
+    expect(mockedPlayer.reset).not.toHaveBeenCalled();
+    expect(mockedPlayer.add).not.toHaveBeenCalled();
+    expect(mockedPlayer.updateNowPlayingMetadata).toHaveBeenCalledTimes(1);
+    expect(mockedPlayer.updateNowPlayingMetadata).toHaveBeenCalledWith(
       expect.objectContaining({
-        id: 'silence',
         title: 'Rain',
         artist: 'Playing',
         duration: 0,
       }),
     );
-    expect(mockedPlayer.play).toHaveBeenCalledTimes(1);
+    // Must NOT drive RNTP's transport. KotlinAudio requests
+    // AUDIOFOCUS_GAIN whenever its player starts, and expo-audio pauses
+    // every player it owns on the resulting AUDIOFOCUS_LOSS - so a play()
+    // here silenced all the real audio, once per track selection.
+    expect(mockedPlayer.play).not.toHaveBeenCalled();
     expect(mockedPlayer.pause).not.toHaveBeenCalled();
   });
 
-  it('pauses when isAudioPlaying=false', async () => {
+  it('updates metadata without touching the transport when isAudioPlaying=false', async () => {
     const { view } = await mountAndWaitForSetup();
 
     mockedPlayer.play.mockClear();
     mockedPlayer.pause.mockClear();
+    mockedPlayer.updateNowPlayingMetadata.mockClear();
 
     await act(async () => {
       await view.result.current.updateMetadata('Rain', 'Paused', false);
     });
 
-    expect(mockedPlayer.pause).toHaveBeenCalledTimes(1);
+    expect(mockedPlayer.updateNowPlayingMetadata).toHaveBeenCalledTimes(1);
+    // Pausing RNTP here would drop the foreground service (and on the next
+    // play() re-request AUDIOFOCUS_GAIN, silencing expo-audio again). The
+    // silent holding track runs untouched for the life of the service.
+    expect(mockedPlayer.pause).not.toHaveBeenCalled();
     expect(mockedPlayer.play).not.toHaveBeenCalled();
+    expect(mockedPlayer.reset).not.toHaveBeenCalled();
   });
 
   it('is debounced on identical (title, artist, isAudioPlaying)', async () => {
@@ -270,6 +387,7 @@ describe('updateMetadata', () => {
     });
     mockedPlayer.reset.mockClear();
     mockedPlayer.add.mockClear();
+    mockedPlayer.updateNowPlayingMetadata.mockClear();
     mockedPlayer.play.mockClear();
 
     await act(async () => {
@@ -278,6 +396,7 @@ describe('updateMetadata', () => {
 
     expect(mockedPlayer.reset).not.toHaveBeenCalled();
     expect(mockedPlayer.add).not.toHaveBeenCalled();
+    expect(mockedPlayer.updateNowPlayingMetadata).not.toHaveBeenCalled();
     expect(mockedPlayer.play).not.toHaveBeenCalled();
   });
 
@@ -287,31 +406,28 @@ describe('updateMetadata', () => {
     await act(async () => {
       await view.result.current.updateMetadata('Rain', 'Playing', true);
     });
-    mockedPlayer.reset.mockClear();
+    mockedPlayer.updateNowPlayingMetadata.mockClear();
 
     await act(async () => {
       await view.result.current.updateMetadata('Rain', 'Playing', false);
     });
-    expect(mockedPlayer.reset).toHaveBeenCalledTimes(1);
+    expect(mockedPlayer.updateNowPlayingMetadata).toHaveBeenCalledTimes(1);
 
-    mockedPlayer.reset.mockClear();
+    mockedPlayer.updateNowPlayingMetadata.mockClear();
     await act(async () => {
       await view.result.current.updateMetadata('Heartbeat', 'Playing', false);
     });
-    expect(mockedPlayer.reset).toHaveBeenCalledTimes(1);
+    expect(mockedPlayer.updateNowPlayingMetadata).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('DeviceEventEmitter subscription', () => {
-  it('routes TOGGLE_PLAY_PAUSE events to the latest onTogglePlayPause', async () => {
+  it('subscribes on mount (independent of lazy setup) and routes events to the latest onTogglePlayPause', async () => {
     const first = callbacks();
     const view = renderHook(
       ({ cb }) => useForegroundService(cb),
       { initialProps: { cb: first } },
     );
-    await waitFor(() => {
-      expect(mockedPlayer.setVolume).toHaveBeenCalledWith(0);
-    });
 
     const subscription = mockedAddListener.mock.calls.find(
       ([event]) => event === FOREGROUND_EVENTS.TOGGLE_PLAY_PAUSE,
@@ -339,5 +455,38 @@ describe('unmount cleanup', () => {
     view.unmount();
 
     expect(mockedPlayer.reset).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT call TrackPlayer.reset on unmount when setup never ran', async () => {
+    const { view } = mountWithoutSetup();
+
+    // Ensure no setup has been triggered.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    mockedPlayer.reset.mockClear();
+
+    view.unmount();
+
+    expect(mockedPlayer.reset).not.toHaveBeenCalled();
+  });
+});
+
+describe('platform variant parity', () => {
+  // playlist.tsx destructures this hook's result without knowing which
+  // platform file Metro resolved. If the Android hook grows a method and the
+  // shims do not, the web and iOS builds break at runtime with a green
+  // suite. Asserted here because this file already installs every mock the
+  // Android hook needs.
+  it.each([
+    ['web', '@/hooks/use-foreground-service.web'],
+    ['ios', '@/hooks/use-foreground-service.ios'],
+  ])('the %s shim returns the same keys as the Android hook', (_platform, modulePath) => {
+    const shim = require(modulePath).useForegroundService as typeof useForegroundService;
+
+    const android = renderHook(() => useForegroundService(callbacks())).result.current;
+    const variant = renderHook(() => shim(callbacks())).result.current;
+
+    expect(Object.keys(variant).sort()).toEqual(Object.keys(android).sort());
   });
 });

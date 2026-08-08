@@ -4,6 +4,7 @@
  * to `@react-native-community/slider` on native. The two implementations
  * share the same prop contract so callers don't have to branch.
  */
+import { useId } from 'react';
 import { Platform, View, StyleSheet } from 'react-native';
 import { Colors } from '@/constants/theme';
 
@@ -29,7 +30,16 @@ const WebSlider = ({
   style,
 }: SliderProps) => {
   const percentage = ((value - minimumValue) / (maximumValue - minimumValue)) * 100;
-  const sliderId = `slider-${Math.random().toString(36).substr(2, 9)}`;
+  // useId, not Math.random: the previous version minted a new class name on
+  // every render, so dragging rewrote the injected <style> block and swapped
+  // the input's className on every pointer event - a full CSS recalc per
+  // frame, per visible slider. It also made render impure, which breaks
+  // hydration when the markup is pre-rendered. useId is stable per instance
+  // and identical across server and client.
+  // React's generated ids contain ':', which is not valid in a CSS class
+  // selector, so strip everything that is not safe for one.
+  const instanceId = useId();
+  const sliderId = `slider-${instanceId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
 
   return (
     <View style={[styles.webContainer, style]}>

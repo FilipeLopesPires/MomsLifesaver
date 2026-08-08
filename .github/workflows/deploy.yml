@@ -15,7 +15,40 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Gates the deploy: a broken bundle should never reach GitHub Pages.
+  # Nothing ran these before, so typecheck and lint had drifted into failing.
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: src/MomsLifesaver/package-lock.json
+
+      - name: Install dependencies
+        working-directory: src/MomsLifesaver
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: src/MomsLifesaver
+        run: npm run typecheck
+
+      - name: Lint
+        working-directory: src/MomsLifesaver
+        run: npm run lint
+
+      - name: Test with coverage thresholds
+        working-directory: src/MomsLifesaver
+        run: npm run test:coverage
+
   build-and-deploy:
+    needs: verify
     runs-on: ubuntu-latest
     environment:
       name: github-pages

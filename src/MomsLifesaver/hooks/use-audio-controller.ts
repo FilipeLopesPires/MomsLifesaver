@@ -3,7 +3,7 @@
  *
  * Owns the in-memory playback state for every track in `TRACK_LIBRARY`:
  *   - loads each track once into a platform-appropriate `Sound` handle
- *     (`expo-av` on native, `WebSound` on web),
+ *     (`expo-audio` on native, `WebSound` on web),
  *   - tracks per-track `isPlaying` / `isPaused` / `volume` flags,
  *   - exposes toggle / play / pause / stop / volume helpers that operate
  *     either on a single track id or on an arbitrary subset of ids,
@@ -12,17 +12,30 @@
  *
  * `TrackMetadata.startTimes` (when provided) is used to pick a random
  * starting cue on fresh plays; resumed tracks keep their position.
+ *
+ * Native playback is backed by `expo-audio` (AndroidX Media3 on Android,
+ * AVAudioEngine on iOS). This shares a single MediaSession with
+ * `react-native-track-player`'s foreground-service notification, so the
+ * two stacks no longer fight over AudioFocus the way expo-av + RNTP
+ * used to.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, AppState } from 'react-native';
-import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
+import { setAudioModeAsync } from 'expo-audio';
 
 import { TRACK_LIBRARY, type TrackId, type TrackMetadata } from '@/constants/tracks';
-import { log, logWarn, logError } from '@/utils/logger';
+import { log, logError } from '@/utils/logger';
 import { parseStartTime } from '@/utils/start-time';
 import { WebSoundFactory } from '@/services/web-sound';
+import { NativeSoundFactory } from '@/services/native-sound';
 
 export { parseStartTime };
+
+type SoundStatus = {
+  isLoaded: boolean;
+  positionMillis: number;
+  durationMillis?: number;
+};
 
 type SoundHandle = {
   playAsync: () => Promise<unknown>;
@@ -30,11 +43,7 @@ type SoundHandle = {
   stopAsync: () => Promise<unknown>;
   setVolumeAsync: (value: number) => Promise<unknown>;
   setPositionAsync: (positionMillis: number) => Promise<unknown>;
-  getStatusAsync: () => Promise<{
-    isLoaded: boolean;
-    positionMillis: number;
-    durationMillis?: number;
-  }>;
+  getStatusAsync: () => Promise<SoundStatus>;
   unloadAsync: () => Promise<unknown>;
 };
 
@@ -46,15 +55,31 @@ type LoadedTrack = {
   volume: number;
 };
 
+type CreateOptions = {
+  volume: number;
+  isLooping: boolean;
+  shouldPlay: boolean;
+  debugLabel?: string;
+};
+
 const createSoundAsync = async (
   audioModule: number,
-  options: { volume: number; isLooping: boolean; shouldPlay: boolean },
+  options: CreateOptions,
 ): Promise<{ sound: SoundHandle }> => {
   if (Platform.OS === 'web') {
     return WebSoundFactory.createAsync(audioModule, options);
   }
-  const { sound } = await Audio.Sound.createAsync(audioModule, options);
-  return { sound: sound as unknown as SoundHandle };
+  return NativeSoundFactory.createAsync(audioModule, options);
+};
+
+/**
+ * Release a batch of sound handles, tolerating individual failures.
+ * `Promise.all` would abandon the rest of the batch on the first
+ * rejection, leaking every player after it - which matters most on the
+ * unmount path, where nothing will ever retry.
+ */
+const unloadAllAsync = async (sounds: SoundHandle[]): Promise<void> => {
+  await Promise.allSettled(sounds.map((sound) => sound.unloadAsync()));
 };
 
 type ControllerState = {
@@ -72,14 +97,13 @@ const configureAudioModeAsync = async () => {
     return;
   }
 
-  await Audio.setAudioModeAsync({
-    staysActiveInBackground: true,
-    shouldDuckAndroid: true,
-    playThroughEarpieceAndroid: false,
-    allowsRecordingIOS: false,
-    playsInSilentModeIOS: true,
-    interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
-    interruptionModeIOS: InterruptionModeIOS.DuckOthers,
+  await setAudioModeAsync({
+    playsInSilentMode: true,
+    shouldPlayInBackground: true,
+    interruptionMode: 'duckOthers',
+    interruptionModeAndroid: 'duckOthers',
+    allowsRecording: false,
+    shouldRouteThroughEarpiece: false,
   });
 };
 
@@ -111,8 +135,28 @@ const computeStartPositionAsync = async (track: LoadedTrack): Promise<number> =>
 
 export const useAudioController = () => {
   const [state, setState] = useState<ControllerState>(INITIAL_STATE);
+  // Every callback below reads live playback state through this ref instead
+  // of closing over `state`, so their identities stay stable for the life of
+  // the hook. Closing over state meant all eight were recreated on every
+  // playback change, which defeated React.memo on TrackGrid and TrackCard:
+  // a single slider drag re-rendered all seven tiles at pointer-event rate.
+  //
+  // Safe because these callbacks only ever run from user events, which are
+  // dispatched long after the commit that updated the ref. All writes still
+  // go through functional setState, so concurrent callers cannot clobber
+  // each other regardless of what the ref held when they started.
+  const stateRef = useRef(state);
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
   const mountedRef = useRef(true);
   const togglingTracksRef = useRef<Set<TrackId>>(new Set());
+  // Mirrors the loaded sound handles so the unmount cleanup can release
+  // them. A ref rather than `state.tracks` because the cleanup closure is
+  // created once (empty deps) and would otherwise capture the initial,
+  // empty state and unload nothing. The handles are assigned once at load
+  // and never replaced, so a plain array stays accurate.
+  const loadedSoundsRef = useRef<SoundHandle[]>([]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -131,6 +175,7 @@ export const useAudioController = () => {
                 volume: track.defaultVolume,
                 isLooping: true,
                 shouldPlay: false,
+                debugLabel: track.id,
               });
               log("[MomsLifesaver] Successfully loaded audio for track:", track.id);
               return [track.id, {
@@ -154,9 +199,11 @@ export const useAudioController = () => {
         );
 
         if (!mountedRef.current) {
-          await Promise.all(entries.map(async ([, track]) => track.sound.unloadAsync()));
+          await unloadAllAsync(entries.map(([, track]) => track.sound));
           return;
         }
+
+      loadedSoundsRef.current = entries.map(([, track]) => track.sound);
 
       setState({
         tracks: Object.fromEntries(entries) as ControllerState['tracks'],
@@ -172,6 +219,13 @@ export const useAudioController = () => {
 
     return () => {
       mountedRef.current = false;
+      // Release every player we managed to load. Without this the
+      // handles outlive the hook: on native each one holds an open
+      // Media3/AVAudioEngine player, and on web an <audio> element that
+      // keeps its buffer alive.
+      const sounds = loadedSoundsRef.current;
+      loadedSoundsRef.current = [];
+      void unloadAllAsync(sounds);
     };
   }, []);
 
@@ -203,7 +257,7 @@ export const useAudioController = () => {
       return null;
     }
     
-    const track = state.tracks[trackId];
+    const track = stateRef.current.tracks[trackId];
     if (!track) return null;
 
     togglingTracksRef.current.add(trackId);
@@ -232,7 +286,7 @@ export const useAudioController = () => {
       } else if (track.isPaused) {
         // Track is paused - resume it
         log("[MomsLifesaver] Resuming track:", trackId);
-        await track.sound.setVolumeAsync(track.volume * state.globalVolume);
+        await track.sound.setVolumeAsync(track.volume * stateRef.current.globalVolume);
         await track.sound.playAsync();
         
         setState((previous) => ({
@@ -258,7 +312,7 @@ export const useAudioController = () => {
         } else {
           await track.sound.setPositionAsync(0);
         }
-        await track.sound.setVolumeAsync(track.volume * state.globalVolume);
+        await track.sound.setVolumeAsync(track.volume * stateRef.current.globalVolume);
         await track.sound.playAsync();
         
         setState((previous) => ({
@@ -281,10 +335,10 @@ export const useAudioController = () => {
       togglingTracksRef.current.delete(trackId);
       return track.isPlaying;
     }
-  }, [state.globalVolume, state.tracks]);
+  }, []);
 
   const stopTrack = useCallback(async (trackId: TrackId) => {
-    const track = state.tracks[trackId];
+    const track = stateRef.current.tracks[trackId];
     if (!track) return;
 
     try {
@@ -307,13 +361,13 @@ export const useAudioController = () => {
     } catch (error) {
       logError("[MomsLifesaver] Error stopping track:", trackId, error);
     }
-  }, [state.tracks]);
+  }, []);
 
   const setTrackVolume = useCallback(async (trackId: TrackId, volume: number) => {
-    const track = state.tracks[trackId];
+    const track = stateRef.current.tracks[trackId];
     if (!track) return;
 
-    await track.sound.setVolumeAsync(volume * state.globalVolume);
+    await track.sound.setVolumeAsync(volume * stateRef.current.globalVolume);
 
     setState((previous) => ({
       ...previous,
@@ -325,7 +379,7 @@ export const useAudioController = () => {
         },
       },
     }));
-  }, [state.globalVolume, state.tracks]);
+  }, []);
 
   const setGlobalVolume = useCallback(async (value: number) => {
     setState((previous) => ({
@@ -334,84 +388,17 @@ export const useAudioController = () => {
     }));
 
     await Promise.all(
-      Object.values(state.tracks).map((track) =>
+      Object.values(stateRef.current.tracks).map((track) =>
         track?.sound.setVolumeAsync(track.volume * value),
       ),
     );
-  }, [state.tracks]);
-
-  const pauseAllTracks = useCallback(async () => {
-    log("[MomsLifesaver] Pausing all tracks");
-    await Promise.all(
-      Object.values(state.tracks).map(async (track) => {
-        if (track?.isPlaying) {
-          try {
-            await track.sound.pauseAsync();
-            log("[MomsLifesaver] Paused track:", track.metadata.id);
-          } catch (error) {
-            logError("[MomsLifesaver] Error pausing track:", track.metadata.id, error);
-          }
-        }
-      }),
-    );
-
-    setState((previous) => ({
-      ...previous,
-      tracks: Object.fromEntries(
-        Object.entries(previous.tracks).map(([id, track]) => [
-          id,
-          track ? { ...track, isPlaying: false, isPaused: true } : track,
-        ]),
-      ),
-    }));
-  }, [state.tracks]);
-
-  const playAllTracks = useCallback(async () => {
-    log("[MomsLifesaver] Playing all tracks");
-    await Promise.all(
-      Object.values(state.tracks).map(async (track) => {
-        if (track && (!track.isPlaying || track.isPaused)) {
-          try {
-            if (track.isPaused) {
-              // Resume paused track
-              await track.sound.setVolumeAsync(track.volume * state.globalVolume);
-              await track.sound.playAsync();
-              log("[MomsLifesaver] Resuming track:", track.metadata.id);
-            } else {
-              // Start stopped track
-              const startPositionMillis = await computeStartPositionAsync(track);
-              if (startPositionMillis > 0) {
-                await track.sound.setPositionAsync(startPositionMillis);
-              } else {
-                await track.sound.setPositionAsync(0);
-              }
-              await track.sound.setVolumeAsync(track.volume * state.globalVolume);
-              await track.sound.playAsync();
-              log("[MomsLifesaver] Playing track:", track.metadata.id);
-            }
-          } catch (error) {
-            logError("[MomsLifesaver] Error playing track:", track.metadata.id, error);
-          }
-        }
-      }),
-    );
-
-    setState((previous) => ({
-      ...previous,
-      tracks: Object.fromEntries(
-        Object.entries(previous.tracks).map(([id, track]) => [
-          id,
-          track ? { ...track, isPlaying: true, isPaused: false } : track,
-        ]),
-      ),
-    }));
-  }, [state.tracks, state.globalVolume]);
+  }, []);
 
   const pauseSelectedTracks = useCallback(async (trackIds: TrackId[]) => {
     log("[MomsLifesaver] Pausing selected tracks:", trackIds);
     await Promise.all(
       trackIds.map(async (trackId) => {
-        const track = state.tracks[trackId];
+        const track = stateRef.current.tracks[trackId];
         if (track?.isPlaying) {
           try {
             await track.sound.pauseAsync();
@@ -432,18 +419,18 @@ export const useAudioController = () => {
         ]),
       ),
     }));
-  }, [state.tracks]);
+  }, []);
 
   const playSelectedTracks = useCallback(async (trackIds: TrackId[]) => {
     log("[MomsLifesaver] Playing selected tracks:", trackIds);
     await Promise.all(
       trackIds.map(async (trackId) => {
-        const track = state.tracks[trackId];
+        const track = stateRef.current.tracks[trackId];
         if (track && (!track.isPlaying || track.isPaused)) {
           try {
             if (track.isPaused) {
               // Resume paused track
-              await track.sound.setVolumeAsync(track.volume * state.globalVolume);
+              await track.sound.setVolumeAsync(track.volume * stateRef.current.globalVolume);
               await track.sound.playAsync();
               log("[MomsLifesaver] Resuming track:", trackId);
             } else {
@@ -458,7 +445,7 @@ export const useAudioController = () => {
               }
               // If track has been played before (positionMillis > 0), don't reset position
               
-              await track.sound.setVolumeAsync(track.volume * state.globalVolume);
+              await track.sound.setVolumeAsync(track.volume * stateRef.current.globalVolume);
               await track.sound.playAsync();
               log("[MomsLifesaver] Playing track:", trackId);
             }
@@ -478,11 +465,11 @@ export const useAudioController = () => {
         ]),
       ),
     }));
-  }, [state.tracks, state.globalVolume]);
+  }, []);
 
   const toggleSelectedTracksPlayPause = useCallback(async (trackIds: TrackId[]) => {
     const hasPlayingSelectedTracks = trackIds.some(trackId => {
-      const track = state.tracks[trackId];
+      const track = stateRef.current.tracks[trackId];
       return track?.isPlaying && !track.isPaused;
     });
     
@@ -493,11 +480,7 @@ export const useAudioController = () => {
       // Play all selected tracks (resume paused ones, start stopped ones)
       await playSelectedTracks(trackIds);
     }
-  }, [state.tracks, pauseSelectedTracks, playSelectedTracks]);
-
-  const teardown = useCallback(async () => {
-    await Promise.all(Object.values(state.tracks).map((track) => track?.sound.unloadAsync()));
-  }, [state.tracks]);
+  }, [pauseSelectedTracks, playSelectedTracks]);
 
   const publicTracks = useMemo(() => {
     return Object.fromEntries(
@@ -528,7 +511,6 @@ export const useAudioController = () => {
     pauseSelectedTracks,
     playSelectedTracks,
     toggleSelectedTracksPlayPause,
-    teardown,
   };
 };
 

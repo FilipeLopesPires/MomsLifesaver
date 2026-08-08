@@ -31,6 +31,9 @@ type AudioMocks = {
     resume: jest.Mock<Promise<void>, []>;
     createGain: jest.Mock;
     createMediaElementSource: jest.Mock;
+    decodeAudioData: jest.Mock;
+    createBuffer: jest.Mock;
+    createBufferSource: jest.Mock;
   }>;
   gainNodes: Array<{ gain: { value: number }; connect: jest.Mock; disconnect: jest.Mock }>;
   sourceNodes: Array<{ connect: jest.Mock; disconnect: jest.Mock }>;
@@ -167,10 +170,14 @@ describe('WebSound - streaming (memory regression guard)', () => {
     dispatchLoaded(lastAudio());
     await sound.whenLoaded();
 
-    const ctx = mocks.lastContext() as unknown as Record<string, unknown>;
-    expect(ctx.decodeAudioData).toBeUndefined();
-    expect(ctx.createBuffer).toBeUndefined();
-    expect(ctx.createBufferSource).toBeUndefined();
+    // These exist on the mock context precisely so this assertion can fail.
+    // Asserting they are `undefined` (as this test used to) is vacuous - it
+    // describes the mock, not WebSound, and would hold even if WebSound
+    // decoded a 64 MB file into memory and crashed the iOS tab.
+    const ctx = mocks.lastContext()!;
+    expect(ctx.decodeAudioData).not.toHaveBeenCalled();
+    expect(ctx.createBuffer).not.toHaveBeenCalled();
+    expect(ctx.createBufferSource).not.toHaveBeenCalled();
     expect(trackedAudioInstances).toHaveLength(1);
   });
 
@@ -208,11 +215,12 @@ describe('WebSound - iOS background playback', () => {
     dispatchLoaded(lastAudio());
     await sound.whenLoaded();
 
-    const ctx = mocks.lastContext();
-    if (ctx) {
-      expect(ctx.createMediaElementSource).not.toHaveBeenCalled();
-      expect(ctx.createGain).not.toHaveBeenCalled();
-    }
+    // Unconditional: on iOS setupWebAudioRouting returns before
+    // getAudioContext(), so no AudioContext is ever constructed. The old
+    // `if (ctx) { ... }` form made every assertion inside it dead code.
+    // This version also catches getAudioContext() being hoisted above the
+    // isIOSWeb() guard.
+    expect(mocks.instances).toHaveLength(0);
     expect(mocks.gainNodes).toHaveLength(0);
     expect(mocks.sourceNodes).toHaveLength(0);
   });
@@ -238,23 +246,43 @@ describe('WebSound - iOS background playback', () => {
     const playSpy = jest.spyOn(HTMLMediaElement.prototype, 'play');
     await sound.playAsync();
 
-    const ctx = mocks.lastContext();
-    if (ctx) {
-      expect(ctx.resume).not.toHaveBeenCalled();
-    }
+    // playNow() skips resumeAudioContext() on iOS, so no context is ever
+    // constructed. Asserted unconditionally - the previous `if (ctx)` form
+    // never executed its assertion.
+    expect(mocks.instances).toHaveLength(0);
     expect(playSpy).toHaveBeenCalled();
+  });
+
+  it('keeps a pre-load volume on the element across load (no reset on iOS)', async () => {
+    const { WebSound: Fresh } = loadFreshModule();
+    const sound = new Fresh(1, { volume: 1, isLooping: false, shouldPlay: false });
+
+    await sound.setVolumeAsync(0.7);
+    dispatchLoaded(lastAudio());
+    await sound.whenLoaded();
+
+    // iOS skips Web Audio routing entirely, so the element IS the volume
+    // control. The non-iOS path resets element volume to 1 once the
+    // GainNode takes over; doing that above the isIOSWeb() guard would
+    // silently disable every slider on iOS.
+    expect(lastAudio().volume).toBeCloseTo(0.7, 5);
+    expect(mocks.gainNodes).toHaveLength(0);
   });
 
   it('sets playsInline on every audio element', () => {
     const { WebSound: Fresh } = loadFreshModule();
     new Fresh(1, { volume: 1, isLooping: false, shouldPlay: false });
     const audio = lastAudio();
-    expect(audio.playsInline).toBe(true);
+    // Typed on HTMLVideoElement only; iOS Safari honours it on audio too.
+    expect((audio as HTMLAudioElement & { playsInline?: boolean }).playsInline).toBe(true);
     expect(audio.getAttribute('playsinline')).not.toBeNull();
   });
 });
 
-describe('WebSound - iOS AudioContext unlock', () => {
+// NOTE: this block runs with the default jsdom user agent, i.e. the NON-iOS
+// branch. It was previously named "iOS AudioContext unlock", which was
+// misleading - the iOS behaviour (no AudioContext at all) is covered above.
+describe('WebSound - non-iOS AudioContext unlock', () => {
   it('playAsync resumes a suspended AudioContext before calling audio.play', async () => {
     const { WebSound: Fresh } = loadFreshModule();
     const sound = new Fresh(1, { volume: 1, isLooping: false, shouldPlay: false });
@@ -362,5 +390,168 @@ describe('WebSound - silent touches do not break the API contract', () => {
     expect(mocks.gainNodes).toHaveLength(0);
     // Element volume is updated as the fallback pre-load path.
     expect(lastAudio().volume).toBeCloseTo(0.7, 5);
+  });
+
+  it('applies a pre-load volume exactly once after routing is established', async () => {
+    const { WebSound: Fresh } = loadFreshModule();
+    const sound = new Fresh(1, { volume: 1, isLooping: false, shouldPlay: false });
+
+    // This ordering is reachable in the real app: WebSoundFactory.createAsync
+    // resolves without awaiting load, so the master slider can drive
+    // setVolumeAsync before 'loadeddata' fires.
+    await sound.setVolumeAsync(0.7);
+
+    dispatchLoaded(lastAudio());
+    await sound.whenLoaded();
+
+    // Exactly one attenuation stage may be live. The pre-load write landed
+    // on the element; once the GainNode exists it owns volume and the
+    // element must be released back to 1. Otherwise both stages apply and
+    // output is 0.7 * 0.7 = 0.49.
+    expect(mocks.gainNodes[0].gain.value).toBeCloseTo(0.7, 5);
+    expect(lastAudio().volume).toBe(1);
+    expect(lastAudio().volume * mocks.gainNodes[0].gain.value).toBeCloseTo(0.7, 5);
+  });
+});
+
+describe('WebSound - transport controls', () => {
+  const loadedSound = async () => {
+    const { WebSound: Fresh } = loadFreshModule();
+    const sound = new Fresh(1, { volume: 1, isLooping: false, shouldPlay: false });
+    dispatchLoaded(lastAudio());
+    await sound.whenLoaded();
+    return sound;
+  };
+
+  it('pauseAsync pauses without rewinding', async () => {
+    const sound = await loadedSound();
+    const audio = lastAudio();
+    audio.currentTime = 12;
+    const pauseSpy = jest.spyOn(HTMLMediaElement.prototype, 'pause');
+
+    await sound.pauseAsync();
+
+    expect(pauseSpy).toHaveBeenCalledTimes(1);
+    // Pause must preserve position - resuming continues where it left off.
+    expect(audio.currentTime).toBe(12);
+  });
+
+  it('stopAsync pauses AND rewinds to 0', async () => {
+    const sound = await loadedSound();
+    const audio = lastAudio();
+    audio.currentTime = 12;
+    const pauseSpy = jest.spyOn(HTMLMediaElement.prototype, 'pause');
+
+    await sound.stopAsync();
+
+    expect(pauseSpy).toHaveBeenCalledTimes(1);
+    expect(audio.currentTime).toBe(0);
+  });
+
+  it('stopAsync swallows a currentTime setter that throws when not seekable', async () => {
+    const sound = await loadedSound();
+    Object.defineProperty(lastAudio(), 'currentTime', {
+      configurable: true,
+      get: () => 0,
+      set: () => {
+        throw new Error('InvalidStateError: not seekable');
+      },
+    });
+
+    await expect(sound.stopAsync()).resolves.toBeUndefined();
+  });
+
+  it('setIsLoopingAsync toggles the element loop flag', async () => {
+    const sound = await loadedSound();
+
+    await sound.setIsLoopingAsync(true);
+    expect(lastAudio().loop).toBe(true);
+
+    await sound.setIsLoopingAsync(false);
+    expect(lastAudio().loop).toBe(false);
+  });
+
+  it('unloadAsync pauses, clears the source and disconnects the graph', async () => {
+    const sound = await loadedSound();
+    const pauseSpy = jest.spyOn(HTMLMediaElement.prototype, 'pause');
+
+    await sound.unloadAsync();
+
+    expect(pauseSpy).toHaveBeenCalled();
+    expect(lastAudio().getAttribute('src')).toBeNull();
+    expect(mocks.sourceNodes[0].disconnect).toHaveBeenCalledTimes(1);
+    expect(mocks.gainNodes[0].disconnect).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('WebSound - getStatusAsync', () => {
+  it('reports not-loaded before loadeddata fires', async () => {
+    const { WebSound: Fresh } = loadFreshModule();
+    const sound = new Fresh(1, { volume: 1, isLooping: false, shouldPlay: false });
+
+    expect(await sound.getStatusAsync()).toEqual({
+      isLoaded: false,
+      positionMillis: 0,
+      isPlaying: false,
+    });
+  });
+
+  it('omits durationMillis when the element reports a non-finite duration', async () => {
+    const { WebSound: Fresh } = loadFreshModule();
+    const sound = new Fresh(1, { volume: 1, isLooping: false, shouldPlay: false });
+    const audio = lastAudio();
+    // Live streams report Infinity; a NaN duration is also common pre-metadata.
+    Object.defineProperty(audio, 'duration', { configurable: true, value: Infinity });
+    dispatchLoaded(audio);
+    await sound.whenLoaded();
+
+    const status = await sound.getStatusAsync();
+
+    expect(status.isLoaded).toBe(true);
+    expect(status.durationMillis).toBeUndefined();
+  });
+
+  it('converts currentTime to milliseconds and reports playing state', async () => {
+    const { WebSound: Fresh } = loadFreshModule();
+    const sound = new Fresh(1, { volume: 1, isLooping: false, shouldPlay: false });
+    const audio = lastAudio();
+    Object.defineProperty(audio, 'duration', { configurable: true, value: 90 });
+    dispatchLoaded(audio);
+    await sound.whenLoaded();
+    audio.currentTime = 12.5;
+    Object.defineProperty(audio, 'paused', { configurable: true, value: false });
+
+    expect(await sound.getStatusAsync()).toEqual({
+      isLoaded: true,
+      positionMillis: 12_500,
+      durationMillis: 90_000,
+      isPlaying: true,
+    });
+  });
+});
+
+describe('WebSound - audio module resolution', () => {
+  it.each([
+    ['a bare string url', 'https://cdn.example/rain.mp3', 'https://cdn.example/rain.mp3'],
+    ['an object with uri', { uri: '/bundled/rain.mp3' }, '/bundled/rain.mp3'],
+    ['an object with default', { default: '/default/rain.mp3' }, '/default/rain.mp3'],
+  ])('resolves %s', async (_label, audioModule, expectedSrc) => {
+    const { WebSound: Fresh } = loadFreshModule();
+    new Fresh(audioModule, { volume: 1, isLooping: false, shouldPlay: false });
+
+    expect(lastAudio().src).toContain(expectedSrc);
+  });
+
+  it('throws when expo-asset cannot resolve the module to a URI', () => {
+    jest.isolateModules(() => {
+      jest.doMock('expo-asset', () => ({
+        Asset: { fromModule: () => ({ uri: null, localUri: null }) },
+      }));
+      const { WebSound: Fresh } = require('../web-sound');
+
+      expect(
+        () => new Fresh(1, { volume: 1, isLooping: false, shouldPlay: false }),
+      ).toThrow(/Could not resolve audio module/);
+    });
   });
 });
