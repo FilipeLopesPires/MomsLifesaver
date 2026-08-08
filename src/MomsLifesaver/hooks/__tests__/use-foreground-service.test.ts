@@ -11,8 +11,10 @@
  *     NOT call reset/add: the silent queue is kept intact so expo-audio
  *     does not lose AudioFocus while the user adds/removes tracks.
  *   - updateMetadata is debounced on identical (title, artist, isPlaying).
- *   - updateMetadata resyncs the TrackPlayer play/pause state so the
- *     notification's Play/Pause icon matches the real audio state.
+ *   - updateMetadata NEVER drives TrackPlayer's transport. KotlinAudio
+ *     requests AUDIOFOCUS_GAIN whenever its player starts, and expo-audio
+ *     pauses every player it owns on the resulting AUDIOFOCUS_LOSS, so a
+ *     play() here silenced the real audio once per track selection.
  *   - DeviceEventEmitter subscription uses the latest callbacks ref.
  *   - Unmount resets TrackPlayer only if setup actually ran.
  */
@@ -349,11 +351,15 @@ describe('updateMetadata', () => {
         duration: 0,
       }),
     );
-    expect(mockedPlayer.play).toHaveBeenCalledTimes(1);
+    // Must NOT drive RNTP's transport. KotlinAudio requests
+    // AUDIOFOCUS_GAIN whenever its player starts, and expo-audio pauses
+    // every player it owns on the resulting AUDIOFOCUS_LOSS - so a play()
+    // here silenced all the real audio, once per track selection.
+    expect(mockedPlayer.play).not.toHaveBeenCalled();
     expect(mockedPlayer.pause).not.toHaveBeenCalled();
   });
 
-  it('pauses when isAudioPlaying=false', async () => {
+  it('updates metadata without touching the transport when isAudioPlaying=false', async () => {
     const { view } = await mountAndWaitForSetup();
 
     mockedPlayer.play.mockClear();
@@ -365,7 +371,10 @@ describe('updateMetadata', () => {
     });
 
     expect(mockedPlayer.updateNowPlayingMetadata).toHaveBeenCalledTimes(1);
-    expect(mockedPlayer.pause).toHaveBeenCalledTimes(1);
+    // Pausing RNTP here would drop the foreground service (and on the next
+    // play() re-request AUDIOFOCUS_GAIN, silencing expo-audio again). The
+    // silent holding track runs untouched for the life of the service.
+    expect(mockedPlayer.pause).not.toHaveBeenCalled();
     expect(mockedPlayer.play).not.toHaveBeenCalled();
     expect(mockedPlayer.reset).not.toHaveBeenCalled();
   });

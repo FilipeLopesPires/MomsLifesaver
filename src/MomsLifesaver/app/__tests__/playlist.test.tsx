@@ -189,17 +189,26 @@ describe('PlaylistScreen initial render', () => {
     expect(screen.getByTestId('grid-selected-ids').children[0] ?? '').toBe('');
   });
 
-  it('forwards the global volume to the footer', () => {
+  it('forwards the global volume to the footer', async () => {
     mockAudioState.globalVolume = 0.65;
     render(<PlaylistScreen />);
     expect(screen.getByTestId('footer-volume').children[0]).toBe('0.65');
   });
 });
 
+// handleTrackPress awaits startService() before toggling, so the toggle
+// lands a microtask later. Pressing inside act() flushes that; a bare
+// fireEvent.press would assert before the audio call happened.
+const pressTrack = async (trackId: string) => {
+  await act(async () => {
+    fireEvent.press(screen.getByTestId(`grid-press-${trackId}`));
+  });
+};
+
 describe('PlaylistScreen track selection', () => {
-  it('calls toggleTrack and marks the track as selected on first press', () => {
+  it('calls toggleTrack and marks the track as selected on first press', async () => {
     render(<PlaylistScreen />);
-    fireEvent.press(screen.getByTestId(`grid-press-${FIRST_TRACK.id}`));
+    await pressTrack(FIRST_TRACK.id);
 
     expect(mockToggleTrack).toHaveBeenCalledTimes(1);
     expect(mockToggleTrack).toHaveBeenCalledWith(FIRST_TRACK.id);
@@ -207,10 +216,10 @@ describe('PlaylistScreen track selection', () => {
     expect(screen.getByTestId('grid-selected-ids').children[0]).toBe(FIRST_TRACK.id);
   });
 
-  it('accumulates multiple selections', () => {
+  it('accumulates multiple selections', async () => {
     render(<PlaylistScreen />);
-    fireEvent.press(screen.getByTestId(`grid-press-${FIRST_TRACK.id}`));
-    fireEvent.press(screen.getByTestId(`grid-press-${SECOND_TRACK.id}`));
+    await pressTrack(FIRST_TRACK.id);
+    await pressTrack(SECOND_TRACK.id);
 
     expect(mockToggleTrack).toHaveBeenCalledTimes(2);
     expect(mockToggleTrack).toHaveBeenNthCalledWith(1, FIRST_TRACK.id);
@@ -218,9 +227,9 @@ describe('PlaylistScreen track selection', () => {
     expect(screen.getByTestId('footer-count').children[0]).toBe('2');
   });
 
-  it('deselects a playing track and calls toggleTrack to stop it', () => {
+  it('deselects a playing track and calls toggleTrack to stop it', async () => {
     const { rerender } = render(<PlaylistScreen />);
-    fireEvent.press(screen.getByTestId(`grid-press-${FIRST_TRACK.id}`));
+    await pressTrack(FIRST_TRACK.id);
 
     mockAudioState.tracks[FIRST_TRACK.id] = {
       isPlaying: true,
@@ -230,16 +239,16 @@ describe('PlaylistScreen track selection', () => {
     rerender(<PlaylistScreen />);
 
     mockToggleTrack.mockClear();
-    fireEvent.press(screen.getByTestId(`grid-press-${FIRST_TRACK.id}`));
+    await pressTrack(FIRST_TRACK.id);
 
     expect(mockToggleTrack).toHaveBeenCalledTimes(1);
     expect(mockToggleTrack).toHaveBeenCalledWith(FIRST_TRACK.id);
     expect(screen.getByTestId('footer-count').children[0]).toBe('0');
   });
 
-  it('deselects a paused track WITHOUT calling toggleTrack (all-paused optimization)', () => {
+  it('deselects a paused track WITHOUT calling toggleTrack (all-paused optimization)', async () => {
     const { rerender } = render(<PlaylistScreen />);
-    fireEvent.press(screen.getByTestId(`grid-press-${FIRST_TRACK.id}`));
+    await pressTrack(FIRST_TRACK.id);
 
     mockAudioState.tracks[FIRST_TRACK.id] = {
       isPlaying: true,
@@ -249,7 +258,7 @@ describe('PlaylistScreen track selection', () => {
     rerender(<PlaylistScreen />);
 
     mockToggleTrack.mockClear();
-    fireEvent.press(screen.getByTestId(`grid-press-${FIRST_TRACK.id}`));
+    await pressTrack(FIRST_TRACK.id);
 
     expect(mockToggleTrack).not.toHaveBeenCalled();
     expect(screen.getByTestId('footer-count').children[0]).toBe('0');
@@ -259,8 +268,8 @@ describe('PlaylistScreen track selection', () => {
 describe('PlaylistScreen global controls', () => {
   it('routes the footer toggle button to toggleSelectedTracksPlayPause with the current selection', async () => {
     render(<PlaylistScreen />);
-    fireEvent.press(screen.getByTestId(`grid-press-${FIRST_TRACK.id}`));
-    fireEvent.press(screen.getByTestId(`grid-press-${SECOND_TRACK.id}`));
+    await pressTrack(FIRST_TRACK.id);
+    await pressTrack(SECOND_TRACK.id);
 
     await act(async () => {
       fireEvent.press(screen.getByTestId('footer-toggle'));
@@ -275,8 +284,8 @@ describe('PlaylistScreen global controls', () => {
 
   it('routes the footer stop button to stopTrack for each selected track and clears selection', async () => {
     render(<PlaylistScreen />);
-    fireEvent.press(screen.getByTestId(`grid-press-${FIRST_TRACK.id}`));
-    fireEvent.press(screen.getByTestId(`grid-press-${SECOND_TRACK.id}`));
+    await pressTrack(FIRST_TRACK.id);
+    await pressTrack(SECOND_TRACK.id);
 
     await act(async () => {
       fireEvent.press(screen.getByTestId('footer-stop'));
@@ -308,46 +317,69 @@ describe('PlaylistScreen foreground-service integration', () => {
     expect(mockStartService).not.toHaveBeenCalled();
   });
 
-  it('starts the service (after the 300ms delay) and sets "Playing" metadata when a selected track begins playing', () => {
-    jest.useFakeTimers();
-    try {
-      const { rerender } = render(<PlaylistScreen />);
+  it('starts the service BEFORE the first track is toggled (audio-focus ordering)', async () => {
+    render(<PlaylistScreen />);
 
-      fireEvent.press(screen.getByTestId(`grid-press-${FIRST_TRACK.id}`));
+    await pressTrack(FIRST_TRACK.id);
 
-      mockAudioState.tracks = {
-        ...mockAudioState.tracks,
-        [FIRST_TRACK.id]: {
-          isPlaying: true,
-          isPaused: false,
-          volume: FIRST_TRACK.defaultVolume,
-        },
-      };
-      rerender(<PlaylistScreen />);
-
-      mockStartService.mockClear();
-      mockUpdateMetadata.mockClear();
-
-      act(() => {
-        jest.advanceTimersByTime(300);
-      });
-
-      expect(mockStartService).toHaveBeenCalledTimes(1);
-      expect(mockUpdateMetadata).toHaveBeenCalledWith(
-        FIRST_TRACK.title,
-        'Playing',
-        true,
-      );
-    } finally {
-      jest.useRealTimers();
-    }
+    // Ordering is the whole point. KotlinAudio grabs AUDIOFOCUS_GAIN when
+    // the service starts, and expo-audio pauses every player on the
+    // resulting AUDIOFOCUS_LOSS. Last requester wins, so starting the
+    // service after toggleTrack silences the track the user just tapped -
+    // which is exactly the bug this ordering prevents.
+    expect(mockStartService).toHaveBeenCalledTimes(1);
+    expect(mockToggleTrack).toHaveBeenCalledTimes(1);
+    expect(mockStartService.mock.invocationCallOrder[0]).toBeLessThan(
+      mockToggleTrack.mock.invocationCallOrder[0],
+    );
   });
 
-  it('updates metadata to "Paused" when tracks are selected but none is playing', () => {
+  it('keeps the start-before-toggle ordering for every new selection', async () => {
+    render(<PlaylistScreen />);
+
+    await pressTrack(FIRST_TRACK.id);
+    await pressTrack(SECOND_TRACK.id);
+
+    // startService() is called per new selection; making the repeat calls
+    // cheap is the hook's job (it early-returns once the service is
+    // running, so TrackPlayer.play - and its AUDIOFOCUS_GAIN request -
+    // happens exactly once). What matters here is that each toggle is
+    // preceded by its start.
+    expect(mockStartService).toHaveBeenCalledTimes(2);
+    expect(mockToggleTrack).toHaveBeenCalledTimes(2);
+    expect(mockStartService.mock.invocationCallOrder[1]).toBeLessThan(
+      mockToggleTrack.mock.invocationCallOrder[1],
+    );
+  });
+
+  it('sets "Playing" metadata once a selected track is actually playing', async () => {
+    const { rerender } = render(<PlaylistScreen />);
+
+    await pressTrack(FIRST_TRACK.id);
+
+    mockAudioState.tracks = {
+      ...mockAudioState.tracks,
+      [FIRST_TRACK.id]: {
+        isPlaying: true,
+        isPaused: false,
+        volume: FIRST_TRACK.defaultVolume,
+      },
+    };
+    mockUpdateMetadata.mockClear();
+    rerender(<PlaylistScreen />);
+
+    expect(mockUpdateMetadata).toHaveBeenCalledWith(
+      FIRST_TRACK.title,
+      'Playing',
+      true,
+    );
+  });
+
+  it('updates metadata to "Paused" when tracks are selected but none is playing', async () => {
     render(<PlaylistScreen />);
 
     mockUpdateMetadata.mockClear();
-    fireEvent.press(screen.getByTestId(`grid-press-${FIRST_TRACK.id}`));
+    await pressTrack(FIRST_TRACK.id);
 
     expect(mockUpdateMetadata).toHaveBeenCalledWith(
       FIRST_TRACK.title,
@@ -356,9 +388,9 @@ describe('PlaylistScreen foreground-service integration', () => {
     );
   });
 
-  it('invokes toggleSelectedTracksPlayPause through the foreground onTogglePlayPause callback when tracks are selected', () => {
+  it('invokes toggleSelectedTracksPlayPause through the foreground onTogglePlayPause callback when tracks are selected', async () => {
     render(<PlaylistScreen />);
-    fireEvent.press(screen.getByTestId(`grid-press-${FIRST_TRACK.id}`));
+    await pressTrack(FIRST_TRACK.id);
 
     expect(mockForegroundCapture.onTogglePlayPause).not.toBeNull();
     mockForegroundCapture.onTogglePlayPause!();
@@ -382,9 +414,9 @@ describe('PlaylistScreen web media session integration', () => {
     expect(mockWebMediaCapture.value!.trackNames).toEqual([]);
   });
 
-  it('reports isPlaying=true and the selected track names when a track is playing', () => {
+  it('reports isPlaying=true and the selected track names when a track is playing', async () => {
     const { rerender } = render(<PlaylistScreen />);
-    fireEvent.press(screen.getByTestId(`grid-press-${FIRST_TRACK.id}`));
+    await pressTrack(FIRST_TRACK.id);
 
     mockAudioState.tracks = {
       ...mockAudioState.tracks,
@@ -402,8 +434,8 @@ describe('PlaylistScreen web media session integration', () => {
 
   it('clears selection and calls stopTrack when the media-session onStop fires', async () => {
     render(<PlaylistScreen />);
-    fireEvent.press(screen.getByTestId(`grid-press-${FIRST_TRACK.id}`));
-    fireEvent.press(screen.getByTestId(`grid-press-${SECOND_TRACK.id}`));
+    await pressTrack(FIRST_TRACK.id);
+    await pressTrack(SECOND_TRACK.id);
 
     await act(async () => {
       mockWebMediaCapture.value!.callbacks.onStop();

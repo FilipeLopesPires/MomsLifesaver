@@ -73,27 +73,20 @@ export default function PlaylistScreen() {
   // Track if foreground service has been started for current session
   const serviceStartedRef = useRef(false);
 
-  // Manage foreground service based on playback state
+  // Keep the notification's metadata in step with playback.
+  //
+  // Starting the service is NOT done here any more. It used to run on a
+  // 300ms timer after playback began, which put RNTP's AUDIOFOCUS_GAIN
+  // request *after* expo-audio's - and since the last requester wins, that
+  // silenced every track a moment after it started. handleTrackPress now
+  // awaits startService() before the first track plays instead.
   useEffect(() => {
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-
     if (isAnySelectedTrackPlaying) {
-      const trackNamesText = selectedTrackNames.length > 0 
-        ? selectedTrackNames.join(', ') 
+      const trackNamesText = selectedTrackNames.length > 0
+        ? selectedTrackNames.join(', ')
         : "Mom's Lifesaver";
-      
-      if (!serviceStartedRef.current) {
-        // First time starting - delay to avoid race condition with track toggle
-        timeoutId = setTimeout(() => {
-          log("[MomsLifesaver] Starting foreground service (delayed)");
-          startService();
-          updateMetadata(trackNamesText, 'Playing', true);
-          serviceStartedRef.current = true;
-        }, 300);
-      } else {
-        // Service already running, just update metadata
-        updateMetadata(trackNamesText, 'Playing', true);
-      }
+      updateMetadata(trackNamesText, 'Playing', true);
+      serviceStartedRef.current = true;
     } else if (selectedTrackIds.length > 0) {
       // Tracks selected but paused
       const trackNamesText = selectedTrackNames.join(', ') || "Mom's Lifesaver";
@@ -103,18 +96,25 @@ export default function PlaylistScreen() {
       stopService();
       serviceStartedRef.current = false;
     }
-
-    return () => {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-    };
-  }, [isAnySelectedTrackPlaying, selectedTrackNames, selectedTrackIds.length, startService, stopService, updateMetadata]);
+  }, [isAnySelectedTrackPlaying, selectedTrackNames, selectedTrackIds.length, stopService, updateMetadata]);
 
   // Get safe area insets to account for OS UI elements
   const insets = useSafeAreaInsets();
 
-  const handleTrackPress = useCallback((track: TrackMetadata) => {
+  const handleTrackPress = useCallback(async (track: TrackMetadata) => {
+    // Audio-focus ordering, and the reason this await exists.
+    //
+    // KotlinAudio (react-native-track-player) requests AUDIOFOCUS_GAIN when
+    // its player starts. expo-audio's AudioModule responds to the resulting
+    // AUDIOFOCUS_LOSS by pausing every player it owns. Whoever requests
+    // focus LAST wins, so the foreground service must claim it *before* the
+    // first real track starts - otherwise it silences the track the user
+    // just tapped. startService() is a no-op once the service is running,
+    // so this only costs anything on the first selection.
+    if (!selectedTrackIdsRef.current.includes(track.id)) {
+      await startService();
+    }
+
     setSelectedTrackIds((previous) => {
       const isAlreadySelected = previous.includes(track.id);
 
@@ -143,7 +143,7 @@ export default function PlaylistScreen() {
         return [...previous, track.id];
       }
     });
-  }, [toggleTrack]);
+  }, [toggleTrack, startService]);
 
   const handleTrackVolumeChange = useCallback(
     (track: TrackMetadata, value: number) => setTrackVolume(track.id, value),

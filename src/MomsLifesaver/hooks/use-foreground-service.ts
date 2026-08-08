@@ -12,12 +12,27 @@
  *
  * Initialization is lazy: `TrackPlayer.setupPlayer()` and the initial
  * silent-track `add()` only run the first time the caller invokes
- * `startService()` / `updateMetadata()`. Real audio is handled by
- * `expo-audio` (AndroidX Media3), which shares a single audio session
- * with RNTP's Media3 instance, so there is no cross-stack AudioFocus
- * race. Metadata updates use `updateNowPlayingMetadata` and do not
- * rebuild the silent queue, which would otherwise re-request
- * AudioFocus and disturb the real tracks.
+ * `startService()`.
+ *
+ * AudioFocus is the whole game here, and the two stacks do NOT share a
+ * session - RNTP runs KotlinAudio on legacy ExoPlayer2 while expo-audio
+ * runs AndroidX Media3, as two independent AudioManager clients. Two
+ * rules follow, and breaking either one silences the app:
+ *
+ *   1. KotlinAudio requests AUDIOFOCUS_GAIN whenever its player starts.
+ *      expo-audio's AudioModule responds to AUDIOFOCUS_LOSS by pausing
+ *      *every* player it owns. Since the last requester wins, the silent
+ *      holding track must start BEFORE any real track - see the
+ *      `startService()` await in `app/playlist.tsx`.
+ *   2. Nothing after that may touch RNTP's transport. `updateMetadata`
+ *      uses `updateNowPlayingMetadata` only; an innocuous-looking
+ *      `play()` to sync the notification icon re-requests focus and
+ *      kills playback again, once per track selection.
+ *
+ * Consequence of (2): the notification icon tracks RNTP's own state
+ * (always playing) rather than ours. The button still works, because the
+ * fork sets `interceptPlayerActionsTriggeredExternally`, so remote
+ * actions only emit events instead of driving the transport.
  *
  * On web, the companion file `use-foreground-service.web.ts` exports
  * no-op implementations so the rest of the app code stays platform-
@@ -30,7 +45,7 @@ import { FOREGROUND_EVENTS, PlaybackService } from '@/services/playback-service'
 import { log } from '@/utils/logger';
 import { handleError, handleErrorSilent } from '@/utils/error-handler';
 
-const SilenceAudio = require('@/assets/audio/silence.mp3');
+const SilenceAudio = require('@/assets/audio/silence.m4a');
 
 TrackPlayer.registerPlaybackService(() => PlaybackService);
 
@@ -212,13 +227,20 @@ export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
         duration: 0,
       });
 
-      // Sync TrackPlayer's internal state with the real audio state so
-      // the notification shows the correct Play/Pause icon.
-      if (isAudioPlaying) {
-        await TrackPlayer.play();
-      } else {
-        await TrackPlayer.pause();
-      }
+      // NOTE: deliberately does NOT call TrackPlayer.play()/pause() to sync
+      // the notification's play/pause icon.
+      //
+      // KotlinAudio requests AUDIOFOCUS_GAIN every time its player starts.
+      // expo-audio's AudioModule reacts to the resulting AUDIOFOCUS_LOSS by
+      // pausing *every* player it owns, so a play() here silenced all the
+      // real audio - once per track selection, since this runs on every
+      // metadata change. RNTP's silent holding track is started exactly
+      // once, by startService(), before any real playback begins.
+      //
+      // Consequence: the notification icon reflects RNTP's own (always
+      // playing) state rather than ours. The button still works, because
+      // the fork sets interceptPlayerActionsTriggeredExternally, so remote
+      // actions only emit events instead of driving RNTP's transport.
 
       log('[ForegroundService] Updated metadata:', title, '-', artist, '- Playing:', isAudioPlaying);
     } catch (error) {
