@@ -38,9 +38,8 @@ The app is built with [Expo](https://expo.dev) and [React Native](https://reactn
 
 - [Node.js](https://nodejs.org/) (v20 or later recommended)
 - [npm](https://www.npmjs.com/) (comes with Node.js)
-- For mobile development:
-  - [Expo Go](https://expo.dev/go) app on your iOS/Android device, OR
-  - iOS Simulator (macOS only) / Android Emulator
+- For Android (emulator or device): [Android Studio](https://developer.android.com/studio) (for the SDK + an AVD) and a JDK 17. The app uses `expo-dev-client` and native modules that are not in Expo Go, so you must install a development build (see [Running on Android (development build)](#running-on-android-development-build) below).
+- For iOS (macOS only): Xcode + iOS Simulator (same dev-build requirement applies).
 
 ### Installation
 
@@ -69,9 +68,10 @@ The app is built with [Expo](https://expo.dev) and [React Native](https://reactn
 
 5. **Run on your preferred platform**
    - Press `w` for web
-   - Press `a` for Android (requires Android emulator or device)
-   - Press `i` for iOS (requires iOS simulator or device)
-   - Scan QR code with Expo Go app on your phone
+   - Press `a` for Android (requires the development build to be installed - see [Running on Android (development build)](#running-on-android-development-build))
+   - Press `i` for iOS (requires the development build to be installed on the simulator/device)
+
+   Note: Expo Go is **not** supported for this project because `react-native-track-player` is not bundled with Expo Go. You must install a custom development build.
 
 ### Development Scripts
 
@@ -79,8 +79,8 @@ Run these from `src/MomsLifesaver/` (all `npm run` commands execute from that di
 
 - `npm start` - Start the Expo development server
 - `npm run web` - Start the web development server (LAN host)
-- `npm run android` - Run on Android (dev build or Expo Go)
-- `npm run ios` - Run on iOS (dev build or Expo Go)
+- `npm run android` - Launch the Android dev build (requires the APK to already be installed - see [Running on Android (development build)](#running-on-android-development-build))
+- `npm run ios` - Launch the iOS dev build (requires the dev build to already be installed)
 - `npm run export:web` - Export a static web build to `docs/` at the repo root
 - `npm run lint` - Run ESLint (via `expo lint`)
 - `npm test` - Run the Jest test suites (web + native projects)
@@ -88,6 +88,78 @@ Run these from `src/MomsLifesaver/` (all `npm run` commands execute from that di
 - `npm run build:android:preview` - Local EAS build, Android preview APK (`builds/android-preview.apk`)
 - `npm run build:android:prod` - Local EAS build, Android production AAB (`builds/android-prod.aab`)
 - `npm run build:android:prod-apk` - Local EAS build, Android production APK (`builds/android-prod.apk`)
+
+### Running on Android (development build)
+
+This project uses `expo-dev-client` and ships native modules (notably `react-native-track-player`) that are **not** in Expo Go. You need to install a custom development build APK on the target device or emulator once, then `npm run android` connects Metro to it.
+
+#### 1. Android Studio emulator (on your PC)
+
+One-time setup:
+
+1. In Android Studio, open **Device Manager** and create/launch an AVD (Pixel 6, API 34+ recommended).
+2. Make sure `adb` is on your PATH (or use `~/Android/Sdk/platform-tools/adb`).
+3. Verify the emulator is detected:
+   ```bash
+   adb devices
+   ```
+   You should see something like `emulator-5554   device`.
+
+Build and install the dev APK (local EAS build needs JDK 17 + the Android SDK):
+
+```bash
+cd src/MomsLifesaver
+npm run build:android:dev
+adb install -r ./builds/android-dev.apk
+```
+
+`-r` reinstalls if the app is already there.
+
+Run:
+
+```bash
+npm run android
+```
+
+Metro starts and the dev client opens on the emulator, connecting automatically over `adb`.
+
+#### 2. Physical Android device on the same Wi-Fi
+
+One-time setup:
+
+1. On the phone: enable **Developer options** -> **USB debugging**, then plug it in via USB once.
+2. Verify it's seen:
+   ```bash
+   adb devices
+   ```
+3. Install the same APK (cable is easiest the first time):
+   ```bash
+   adb install -r ./builds/android-dev.apk
+   ```
+   Alternatively, copy `android-dev.apk` to the phone and tap it (you may need to allow "Install unknown apps" for your file manager).
+
+Run over Wi-Fi (no cable needed after first install). Metro just needs to be reachable from the phone:
+
+- **LAN (simplest, both on same Wi-Fi):**
+  ```bash
+  npx expo start --dev-client --lan
+  ```
+  Open the **MomsLifesaver** dev build app on the phone, then tap "Fetch development servers" or scan the QR code from the terminal. Make sure your PC's firewall allows inbound TCP `8081` (and `19000-19002` if Expo asks).
+
+- **Tunnel (works across networks / picky firewalls):**
+  ```bash
+  npx expo start --dev-client --tunnel
+  ```
+  Slower but bypasses LAN issues.
+
+#### When to rebuild the APK
+
+You only need to re-run `npm run build:android:dev` when:
+
+- You add/remove a native module (anything in `dependencies` that touches native code).
+- You change `app.json` native config (permissions, plugins, package name, manifest icons, etc.).
+
+For pure JS/TSX edits, just keep Metro running - the dev build hot-reloads.
 
 ### Testing
 

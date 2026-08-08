@@ -24,18 +24,22 @@ import { WebSoundFactory } from '@/services/web-sound';
 
 export { parseStartTime };
 
+type SoundStatus = {
+  isLoaded: boolean;
+  positionMillis: number;
+  durationMillis?: number;
+};
+
 type SoundHandle = {
   playAsync: () => Promise<unknown>;
   pauseAsync: () => Promise<unknown>;
   stopAsync: () => Promise<unknown>;
   setVolumeAsync: (value: number) => Promise<unknown>;
   setPositionAsync: (positionMillis: number) => Promise<unknown>;
-  getStatusAsync: () => Promise<{
-    isLoaded: boolean;
-    positionMillis: number;
-    durationMillis?: number;
-  }>;
+  getStatusAsync: () => Promise<SoundStatus>;
   unloadAsync: () => Promise<unknown>;
+  // Optional on platforms whose mock or web shim doesn't expose it.
+  setOnPlaybackStatusUpdate?: (callback: ((status: unknown) => void) | null) => void;
 };
 
 type LoadedTrack = {
@@ -46,15 +50,121 @@ type LoadedTrack = {
   volume: number;
 };
 
-const createSoundAsync = async (
+type CreateOptions = { volume: number; isLooping: boolean; shouldPlay: boolean };
+
+const createRawSoundAsync = async (
   audioModule: number,
-  options: { volume: number; isLooping: boolean; shouldPlay: boolean },
+  options: CreateOptions,
 ): Promise<{ sound: SoundHandle }> => {
   if (Platform.OS === 'web') {
     return WebSoundFactory.createAsync(audioModule, options);
   }
   const { sound } = await Audio.Sound.createAsync(audioModule, options);
   return { sound: sound as unknown as SoundHandle };
+};
+
+// Detects the Android-only "Player does not exist." rejection that
+// expo-av throws when the native AVManager has silently torn the
+// underlying ExoPlayer down (see AVManager.tryGetSoundForKey). Matches
+// both the documented error code and the message text, since the
+// mapping between them is not guaranteed across platforms.
+const isNoPlayerError = (error: unknown): boolean => {
+  if (!error || typeof error !== 'object') return false;
+  const maybe = error as { code?: unknown; message?: unknown };
+  if (maybe.code === 'E_AUDIO_NOPLAYER') return true;
+  if (typeof maybe.message === 'string' && maybe.message.includes('Player does not exist')) {
+    return true;
+  }
+  return false;
+};
+
+// Wraps a raw SoundHandle so that any method rejection whose cause is
+// an expo-av E_AUDIO_NOPLAYER silent tear-down triggers a one-shot
+// reload of the underlying Sound via Audio.Sound.createAsync, followed
+// by a single retry. Concurrent in-flight callers share the same
+// reload promise so the native player is only recreated once per
+// tear-down event. The wrapper also remembers the most recent volume
+// so a reload restores the user's current setting instead of snapping
+// back to the original default.
+//
+// Recovery is strictly reactive: only a caller-issued op that rejects
+// with E_AUDIO_NOPLAYER triggers a reload. A previous implementation
+// attempted to be proactive by subscribing to setOnPlaybackStatusUpdate
+// and reloading whenever expo-av reported { isLoaded: false, error },
+// but on real Android hardware that callback fires for transient native
+// glitches too, causing the sound to be silently recreated with
+// shouldPlay: false ~0.1 s into playback while the JS-side state kept
+// claiming "playing".
+const createResilientSoundAsync = async (
+  audioModule: number,
+  options: CreateOptions,
+): Promise<SoundHandle> => {
+  const currentOptions: CreateOptions = { ...options };
+  let current: SoundHandle = (await createRawSoundAsync(audioModule, currentOptions)).sound;
+  let reloadPromise: Promise<SoundHandle> | null = null;
+
+  const reload = (): Promise<SoundHandle> => {
+    if (reloadPromise) return reloadPromise;
+    reloadPromise = (async () => {
+      logWarn('[MomsLifesaver] expo-av player torn down, reloading sound');
+      try {
+        await current.unloadAsync();
+      } catch {
+        // The native player is already gone - unload best-effort.
+      }
+      // Re-create in a stopped state; callers already set position/play as needed.
+      const { sound } = await createRawSoundAsync(audioModule, {
+        ...currentOptions,
+        shouldPlay: false,
+      });
+      current = sound;
+      return sound;
+    })();
+    reloadPromise.finally(() => {
+      reloadPromise = null;
+    });
+    return reloadPromise;
+  };
+
+  const withResilience = <Args extends unknown[], R>(
+    op: (handle: SoundHandle, ...args: Args) => Promise<R>,
+  ) => {
+    return async (...args: Args): Promise<R> => {
+      try {
+        return await op(current, ...args);
+      } catch (error) {
+        if (!isNoPlayerError(error)) throw error;
+        const fresh = await reload();
+        // Single retry only: if this also throws, the error propagates.
+        return op(fresh, ...args);
+      }
+    };
+  };
+
+  const setVolumeRaw = withResilience((h, value: number) => h.setVolumeAsync(value));
+
+  return {
+    playAsync: withResilience((h) => h.playAsync()),
+    pauseAsync: withResilience((h) => h.pauseAsync()),
+    stopAsync: withResilience((h) => h.stopAsync()),
+    setVolumeAsync: async (value: number) => {
+      // Remember so reload() can restore it without the caller's help.
+      currentOptions.volume = value;
+      return setVolumeRaw(value);
+    },
+    setPositionAsync: withResilience((h, pos: number) => h.setPositionAsync(pos)),
+    getStatusAsync: withResilience((h) => h.getStatusAsync()),
+    // unloadAsync is terminal; we don't want to reload just to unload.
+    unloadAsync: () => current.unloadAsync(),
+  };
+};
+
+const createSoundAsync = async (
+  audioModule: number,
+  options: CreateOptions,
+): Promise<{ sound: SoundHandle }> => {
+  const sound = await createResilientSoundAsync(audioModule, options);
+  return { sound };
 };
 
 type ControllerState = {

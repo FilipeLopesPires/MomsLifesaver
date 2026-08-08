@@ -3,13 +3,16 @@
  *
  * Android-only notification/service lifecycle. Guards:
  *   - No-ops on non-Android.
+ *   - Setup is LAZY: TrackPlayer.setupPlayer only runs the first time a
+ *     caller invokes startService/updateMetadata (never on mount). This
+ *     prevents a race with expo-av's ExoPlayer instances.
  *   - Setup installs the silent "holding" track (volume 0, duration 0, loop).
  *   - start/stop service guard rails.
  *   - updateMetadata debouncing on identical (title, artist, isPlaying).
  *   - updateMetadata resyncs the TrackPlayer play/pause state so the
  *     notification's Play/Pause icon matches the real audio state.
  *   - DeviceEventEmitter subscription uses the latest callbacks ref.
- *   - Unmount resets TrackPlayer.
+ *   - Unmount resets TrackPlayer only if setup actually ran.
  */
 
 jest.mock('react-native', () => ({
@@ -80,12 +83,26 @@ const mockedAddListener = DeviceEventEmitter.addListener as unknown as jest.Mock
 
 const callbacks = () => ({ onTogglePlayPause: jest.fn() });
 
+// Mounts the hook and triggers lazy setup by calling startService once,
+// matching how the playlist screen actually exercises the service.
 const mountAndWaitForSetup = async (cb = callbacks()) => {
   const view = renderHook(({ callbacks: c }) => useForegroundService(c), {
     initialProps: { callbacks: cb },
   });
+  await act(async () => {
+    await view.result.current.startService();
+  });
   await waitFor(() => {
     expect(mockedPlayer.setVolume).toHaveBeenCalledWith(0);
+  });
+  return { view, cb };
+};
+
+// Mounts the hook without triggering setup, for tests that exercise the
+// lazy-init contract itself.
+const mountWithoutSetup = (cb = callbacks()) => {
+  const view = renderHook(({ callbacks: c }) => useForegroundService(c), {
+    initialProps: { callbacks: cb },
   });
   return { view, cb };
 };
@@ -120,7 +137,21 @@ describe('non-Android platforms', () => {
 });
 
 describe('setup', () => {
-  it('configures TrackPlayer with the silent holding track (duration 0, volume 0, loop)', async () => {
+  it('does NOT run setup on mount (lazy init)', async () => {
+    mountWithoutSetup();
+
+    // Flush any microtasks so we're sure nothing queued on mount has fired.
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockedPlayer.setupPlayer).not.toHaveBeenCalled();
+    expect(mockedPlayer.updateOptions).not.toHaveBeenCalled();
+    expect(mockedPlayer.add).not.toHaveBeenCalled();
+    expect(mockedPlayer.setVolume).not.toHaveBeenCalled();
+  });
+
+  it('configures TrackPlayer with the silent holding track on the first startService() call', async () => {
     await mountAndWaitForSetup();
 
     expect(mockedPlayer.setupPlayer).toHaveBeenCalledTimes(1);
@@ -139,6 +170,17 @@ describe('setup', () => {
     expect(mockedPlayer.setVolume).toHaveBeenCalledWith(0);
   });
 
+  it('also runs setup lazily from the first updateMetadata() call', async () => {
+    const { view } = mountWithoutSetup();
+
+    await act(async () => {
+      await view.result.current.updateMetadata('Rain', 'Playing', true);
+    });
+
+    expect(mockedPlayer.setupPlayer).toHaveBeenCalledTimes(1);
+    expect(mockedPlayer.setVolume).toHaveBeenCalledWith(0);
+  });
+
   it('does not re-run setup across re-renders of the same mount', async () => {
     const { view } = await mountAndWaitForSetup();
 
@@ -149,41 +191,49 @@ describe('setup', () => {
     expect(mockedPlayer.add).toHaveBeenCalledTimes(1);
   });
 
+  it('dedupes concurrent setup calls so setupPlayer runs once', async () => {
+    const { view } = mountWithoutSetup();
+
+    await act(async () => {
+      await Promise.all([
+        view.result.current.startService(),
+        view.result.current.startService(),
+        view.result.current.updateMetadata('Rain', 'Playing', true),
+      ]);
+    });
+
+    expect(mockedPlayer.setupPlayer).toHaveBeenCalledTimes(1);
+  });
+
   it('surfaces setup errors via handleError and leaves the service uninitialised', async () => {
     mockedPlayer.setupPlayer.mockRejectedValueOnce(new Error('boom'));
 
     const { result } = renderHook(() => useForegroundService(callbacks()));
 
-    await waitFor(() => {
-      expect(handleError).toHaveBeenCalled();
-    });
-
-    mockedPlayer.play.mockClear();
     await act(async () => {
       await result.current.startService();
     });
-    expect(mockedPlayer.play).not.toHaveBeenCalled();
+
+    expect(handleError).toHaveBeenCalled();
+
+    mockedPlayer.play.mockClear();
+    await act(async () => {
+      await result.current.stopService();
+    });
+    expect(mockedPlayer.pause).not.toHaveBeenCalled();
   });
 });
 
 describe('startService', () => {
   it('plays the holding track on the happy path', async () => {
-    const { view } = await mountAndWaitForSetup();
-
-    mockedPlayer.play.mockClear();
-    await act(async () => {
-      await view.result.current.startService();
-    });
+    // mountAndWaitForSetup already calls startService to trigger lazy setup.
+    await mountAndWaitForSetup();
 
     expect(mockedPlayer.play).toHaveBeenCalledTimes(1);
   });
 
   it('is a no-op when the service is already running', async () => {
     const { view } = await mountAndWaitForSetup();
-
-    await act(async () => {
-      await view.result.current.startService();
-    });
     mockedPlayer.play.mockClear();
 
     await act(async () => {
@@ -210,8 +260,8 @@ describe('stopService', () => {
     expect(mockedPlayer.pause).toHaveBeenCalledTimes(1);
   });
 
-  it('is a no-op when the service was never started', async () => {
-    const { view } = await mountAndWaitForSetup();
+  it('is a no-op when the service was never started (lazy setup never ran)', async () => {
+    const { view } = mountWithoutSetup();
 
     mockedPlayer.pause.mockClear();
     await act(async () => {
@@ -219,6 +269,7 @@ describe('stopService', () => {
     });
 
     expect(mockedPlayer.pause).not.toHaveBeenCalled();
+    expect(mockedPlayer.setupPlayer).not.toHaveBeenCalled();
   });
 });
 
@@ -303,15 +354,12 @@ describe('updateMetadata', () => {
 });
 
 describe('DeviceEventEmitter subscription', () => {
-  it('routes TOGGLE_PLAY_PAUSE events to the latest onTogglePlayPause', async () => {
+  it('subscribes on mount (independent of lazy setup) and routes events to the latest onTogglePlayPause', async () => {
     const first = callbacks();
     const view = renderHook(
       ({ cb }) => useForegroundService(cb),
       { initialProps: { cb: first } },
     );
-    await waitFor(() => {
-      expect(mockedPlayer.setVolume).toHaveBeenCalledWith(0);
-    });
 
     const subscription = mockedAddListener.mock.calls.find(
       ([event]) => event === FOREGROUND_EVENTS.TOGGLE_PLAY_PAUSE,
@@ -339,5 +387,19 @@ describe('unmount cleanup', () => {
     view.unmount();
 
     expect(mockedPlayer.reset).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT call TrackPlayer.reset on unmount when setup never ran', async () => {
+    const { view } = mountWithoutSetup();
+
+    // Ensure no setup has been triggered.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    mockedPlayer.reset.mockClear();
+
+    view.unmount();
+
+    expect(mockedPlayer.reset).not.toHaveBeenCalled();
   });
 });

@@ -10,6 +10,16 @@
  * plays a silent looping track at volume 0 so the foreground service
  * stays active and the notification can carry the current metadata.
  *
+ * Initialization is lazy: `TrackPlayer.setupPlayer()` and the initial
+ * silent-track `add()` only run the first time the caller invokes
+ * `startService()` / `updateMetadata()`. This avoids a mount-time race
+ * on real devices where RNTP's new MediaSession + AudioFocus request
+ * causes expo-av's ExoPlayer instances (loaded in parallel by
+ * `useAudioController`) to be torn down silently, producing the
+ * `E_AUDIO_NOPLAYER` "Player does not exist." error on the first
+ * playAsync. The Android emulator's audio HAL is lax and does not
+ * reproduce this, so the bug only shows up on hardware.
+ *
  * On web, the companion file `use-foreground-service.web.ts` exports
  * no-op implementations so the rest of the app code stays platform-
  * agnostic.
@@ -32,6 +42,7 @@ type ForegroundServiceCallbacks = {
 export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
   const isInitialized = useRef(false);
   const isServiceRunning = useRef(false);
+  const setupPromiseRef = useRef<Promise<boolean> | null>(null);
   const callbacksRef = useRef(callbacks);
 
   // Keep callbacks ref up to date
@@ -39,16 +50,18 @@ export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
     callbacksRef.current = callbacks;
   }, [callbacks]);
 
-  // Initialize track-player once (Android only)
-  useEffect(() => {
-    if (Platform.OS !== 'android') return;
+  // Lazy setup: the first caller triggers TrackPlayer.setupPlayer() and
+  // the silent holding track. Subsequent calls reuse the cached promise.
+  // Returns true iff setup succeeded (so callers can short-circuit).
+  const ensureInitialized = useCallback(async (): Promise<boolean> => {
+    if (Platform.OS !== 'android') return false;
+    if (isInitialized.current) return true;
+    if (setupPromiseRef.current) return setupPromiseRef.current;
 
-    const setup = async () => {
-      if (isInitialized.current) return;
-
+    const run = async (): Promise<boolean> => {
       try {
-        log('[ForegroundService] Setting up TrackPlayer');
-        
+        log('[ForegroundService] Setting up TrackPlayer (lazy)');
+
         await TrackPlayer.setupPlayer({
           autoHandleInterruptions: false,
         });
@@ -77,21 +90,30 @@ export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
 
         // Loop the silent track so it never ends
         await TrackPlayer.setRepeatMode(RepeatMode.Track);
-        
+
         // Set volume to 0 to avoid any audio interference
         await TrackPlayer.setVolume(0);
 
         isInitialized.current = true;
         log('[ForegroundService] TrackPlayer setup complete');
+        return true;
       } catch (error) {
         handleError(error, 'foreground-service', 'Failed to setup TrackPlayer');
+        // Allow a later caller to retry.
+        setupPromiseRef.current = null;
+        return false;
       }
     };
 
-    setup();
+    setupPromiseRef.current = run();
+    return setupPromiseRef.current;
+  }, []);
+
+  // Unmount cleanup (Android only)
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
 
     return () => {
-      // Cleanup on unmount
       if (isInitialized.current) {
         TrackPlayer.reset().catch(() => {});
       }
@@ -118,11 +140,13 @@ export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
     };
   }, []);
 
-  // Start the foreground service (shows notification)
+  // Start the foreground service (shows notification).
+  // Triggers lazy setup on first call.
   const startService = useCallback(async () => {
     if (Platform.OS !== 'android') return;
-    if (!isInitialized.current) {
-      log('[ForegroundService] Cannot start - not initialized');
+    const ready = await ensureInitialized();
+    if (!ready) {
+      log('[ForegroundService] Cannot start - setup failed');
       return;
     }
     if (isServiceRunning.current) {
@@ -137,9 +161,10 @@ export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
     } catch (error) {
       handleErrorSilent(error, 'foreground-service', 'Failed to start service');
     }
-  }, []);
+  }, [ensureInitialized]);
 
-  // Stop the foreground service (hides notification)
+  // Stop the foreground service (hides notification).
+  // No-op if the service was never started (setup never ran).
   const stopService = useCallback(async () => {
     if (Platform.OS !== 'android') return;
     if (!isInitialized.current || !isServiceRunning.current) return;
@@ -153,15 +178,17 @@ export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
     }
   }, []);
 
-  // Update the notification metadata by replacing the track
+  // Update the notification metadata by replacing the track.
+  // Triggers lazy setup on first call.
   // isAudioPlaying: true = audio is playing (show Pause icon), false = audio is paused (show Play icon)
   const updateMetadata = useCallback(async (title: string, artist: string, isAudioPlaying: boolean = true) => {
     if (Platform.OS !== 'android') return;
-    if (!isInitialized.current) return;
+    const ready = await ensureInitialized();
+    if (!ready) return;
 
     // Skip if metadata hasn't changed
     if (
-      currentMetadataRef.current.title === title && 
+      currentMetadataRef.current.title === title &&
       currentMetadataRef.current.artist === artist &&
       currentMetadataRef.current.isPlaying === isAudioPlaying
     ) {
@@ -183,7 +210,7 @@ export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
       });
       await TrackPlayer.setRepeatMode(RepeatMode.Track);
       await TrackPlayer.setVolume(0);
-      
+
       // Sync TrackPlayer state with actual audio state
       // This controls which icon (Play/Pause) is shown in the notification
       if (isAudioPlaying) {
@@ -191,12 +218,12 @@ export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
       } else {
         await TrackPlayer.pause();
       }
-      
+
       log('[ForegroundService] Updated metadata:', title, '-', artist, '- Playing:', isAudioPlaying);
     } catch (error) {
       handleErrorSilent(error, 'foreground-service', 'Failed to update metadata');
     }
-  }, []);
+  }, [ensureInitialized]);
 
   return {
     startService,

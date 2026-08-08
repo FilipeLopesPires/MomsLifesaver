@@ -50,6 +50,7 @@ type MockHandle = {
   setPositionAsync: jest.Mock;
   getStatusAsync: jest.Mock;
   unloadAsync: jest.Mock;
+  setOnPlaybackStatusUpdate: jest.Mock;
 };
 
 const makeHandle = (): MockHandle => ({
@@ -64,6 +65,7 @@ const makeHandle = (): MockHandle => ({
     durationMillis: 60_000,
   }),
   unloadAsync: jest.fn().mockResolvedValue(undefined),
+  setOnPlaybackStatusUpdate: jest.fn(),
 });
 
 const createAsync = Audio.Sound.createAsync as unknown as jest.Mock;
@@ -499,5 +501,189 @@ describe('stopTrack', () => {
     expect(handle.setPositionAsync).toHaveBeenCalledWith(0);
     expect(result.current.tracks['rain'].isPlaying).toBe(false);
     expect(result.current.tracks['rain'].isPaused).toBe(false);
+  });
+});
+
+/**
+ * Regression suite for the Android "Player does not exist." silent
+ * tear-down bug: expo-av's native AVManager silently removes a sound
+ * from its internal map if the underlying ExoPlayer errors out after
+ * load (for example when another media session, like
+ * react-native-track-player, grabs audio focus). Subsequent calls then
+ * reject with { code: 'E_AUDIO_NOPLAYER', message: 'Player does not exist.' }.
+ *
+ * The controller must recover by reloading the sound once and retrying
+ * the call, so user-visible playback keeps working.
+ */
+describe('expo-av silent tear-down recovery', () => {
+  const makeNoPlayerError = () => {
+    const error = new Error('Player does not exist.') as Error & { code?: string };
+    error.code = 'E_AUDIO_NOPLAYER';
+    return error;
+  };
+
+  it('recovers when playAsync rejects with E_AUDIO_NOPLAYER by reloading and retrying', async () => {
+    const { result } = await mount();
+    const original = getHandle('rain');
+
+    // First call rejects as if the native player was silently torn down.
+    original.playAsync.mockRejectedValueOnce(makeNoPlayerError());
+
+    // The controller should call createAsync again to rebuild the sound.
+    // Capture the replacement handle that createAsync returns on retry.
+    const replacement = makeHandle();
+    createAsync.mockImplementationOnce(async (_m: unknown, opts: unknown) => {
+      load.handles.set('rain', replacement);
+      // Reload must pass the current volume via CreateOptions so the
+      // restored sound starts at the right level.
+      expect(opts).toMatchObject({ volume: 1, isLooping: true });
+      return { sound: replacement };
+    });
+
+    await act(async () => {
+      const outcome = await result.current.toggleTrack('rain');
+      expect(outcome).toBe(true);
+    });
+
+    // A fresh sound was created for 'rain' after the tear-down, and the
+    // failed playAsync call was retried on it.
+    expect(replacement.playAsync).toHaveBeenCalledTimes(1);
+    expect(result.current.tracks['rain'].isPlaying).toBe(true);
+    expect(result.current.tracks['rain'].isPaused).toBe(false);
+  });
+
+  it('recovers when setVolumeAsync rejects with E_AUDIO_NOPLAYER during start', async () => {
+    const { result } = await mount();
+    const original = getHandle('rain');
+
+    original.setVolumeAsync.mockRejectedValueOnce(makeNoPlayerError());
+
+    const replacement = makeHandle();
+    createAsync.mockImplementationOnce(async () => {
+      load.handles.set('rain', replacement);
+      return { sound: replacement };
+    });
+
+    await act(async () => {
+      const outcome = await result.current.toggleTrack('rain');
+      expect(outcome).toBe(true);
+    });
+
+    // The failing op (setVolumeAsync) is retried on the replacement,
+    // and the subsequent playAsync call then lands on the replacement
+    // since it is now the current handle.
+    expect(replacement.setVolumeAsync).toHaveBeenCalledWith(1);
+    expect(replacement.playAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it('restores the user\'s most recent volume on a reload (not the original default)', async () => {
+    const { result } = await mount();
+    const original = getHandle('rain');
+
+    // User lowers volume first (this updates the wrapper's remembered options).
+    await act(async () => {
+      await result.current.setTrackVolume('rain', 0.4);
+    });
+
+    original.playAsync.mockRejectedValueOnce(makeNoPlayerError());
+
+    const replacement = makeHandle();
+    let reloadOptions: unknown = null;
+    createAsync.mockImplementationOnce(async (_m: unknown, opts: unknown) => {
+      reloadOptions = opts;
+      load.handles.set('rain', replacement);
+      return { sound: replacement };
+    });
+
+    await act(async () => {
+      await result.current.toggleTrack('rain');
+    });
+
+    expect(reloadOptions).toMatchObject({ volume: 0.4 });
+  });
+
+  it('only retries once per call so a permanently broken sound does not loop', async () => {
+    const { result } = await mount();
+    const original = getHandle('rain');
+    original.playAsync.mockRejectedValue(makeNoPlayerError());
+
+    const replacement = makeHandle();
+    replacement.playAsync.mockRejectedValue(makeNoPlayerError());
+    createAsync.mockImplementationOnce(async () => {
+      load.handles.set('rain', replacement);
+      return { sound: replacement };
+    });
+
+    await act(async () => {
+      const outcome = await result.current.toggleTrack('rain');
+      expect(outcome).toBe(false); // matches existing error fallback semantics
+    });
+
+    // Exactly one reload attempt (one extra createAsync beyond the initial load pass).
+    const extraLoads = createAsync.mock.calls.length - TRACK_LIBRARY.length;
+    expect(extraLoads).toBe(1);
+    expect(replacement.playAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reload for unrelated playAsync errors', async () => {
+    const { result } = await mount();
+    const original = getHandle('rain');
+    original.playAsync.mockRejectedValueOnce(new Error('some other failure'));
+
+    const loadsBefore = createAsync.mock.calls.length;
+
+    await act(async () => {
+      const outcome = await result.current.toggleTrack('rain');
+      expect(outcome).toBe(false);
+    });
+
+    const loadsAfter = createAsync.mock.calls.length;
+    expect(loadsAfter - loadsBefore).toBe(0); // no reload on generic errors
+  });
+
+  // Regression: on a real Android device, expo-av periodically pushes
+  // status-update callbacks while a track is playing. If the native
+  // stack hiccups (audio-focus blip, transient codec error, etc.) the
+  // callback can carry { isLoaded: false, error: ... } even though the
+  // app still wants the sound to keep playing. A previous "best-effort"
+  // proactive-reload listener inside the resilient wrapper would react
+  // to that by unloading the current sound and re-creating it with
+  // shouldPlay: false, which silently killed playback ~0.1 s in while
+  // the JS-side isPlaying state stayed true. The wrapper must not
+  // self-reload from a status callback; recovery only happens reactively
+  // when a caller-issued operation rejects with E_AUDIO_NOPLAYER.
+  it('does not reload the sound from a transient isLoaded:false status update', async () => {
+    const { result } = await mount();
+    const handle = getHandle('rain');
+
+    await act(async () => {
+      const outcome = await result.current.toggleTrack('rain');
+      expect(outcome).toBe(true);
+    });
+
+    const loadsAfterStart = createAsync.mock.calls.length;
+
+    // Grab whatever status callback the wrapper may have registered
+    // and fire the kind of payload that native expo-av produces when
+    // it briefly flags an error on the ExoPlayer instance.
+    const statusCalls = handle.setOnPlaybackStatusUpdate.mock.calls;
+    const listener = statusCalls.length > 0
+      ? (statusCalls[statusCalls.length - 1][0] as ((s: unknown) => void) | null)
+      : null;
+
+    if (listener) {
+      await act(async () => {
+        listener({ isLoaded: false, error: 'transient native glitch' });
+        // Let any microtasks scheduled by the listener settle.
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    }
+
+    // No extra createAsync call (no proactive reload) and the original
+    // handle was not unloaded behind the caller's back.
+    expect(createAsync.mock.calls.length).toBe(loadsAfterStart);
+    expect(handle.unloadAsync).not.toHaveBeenCalled();
+    expect(result.current.tracks['rain'].isPlaying).toBe(true);
   });
 });
