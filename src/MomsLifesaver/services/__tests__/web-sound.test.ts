@@ -245,6 +245,22 @@ describe('WebSound - iOS background playback', () => {
     expect(playSpy).toHaveBeenCalled();
   });
 
+  it('keeps a pre-load volume on the element across load (no reset on iOS)', async () => {
+    const { WebSound: Fresh } = loadFreshModule();
+    const sound = new Fresh(1, { volume: 1, isLooping: false, shouldPlay: false });
+
+    await sound.setVolumeAsync(0.7);
+    dispatchLoaded(lastAudio());
+    await sound.whenLoaded();
+
+    // iOS skips Web Audio routing entirely, so the element IS the volume
+    // control. The non-iOS path resets element volume to 1 once the
+    // GainNode takes over; doing that above the isIOSWeb() guard would
+    // silently disable every slider on iOS.
+    expect(lastAudio().volume).toBeCloseTo(0.7, 5);
+    expect(mocks.gainNodes).toHaveLength(0);
+  });
+
   it('sets playsInline on every audio element', () => {
     const { WebSound: Fresh } = loadFreshModule();
     new Fresh(1, { volume: 1, isLooping: false, shouldPlay: false });
@@ -362,5 +378,26 @@ describe('WebSound - silent touches do not break the API contract', () => {
     expect(mocks.gainNodes).toHaveLength(0);
     // Element volume is updated as the fallback pre-load path.
     expect(lastAudio().volume).toBeCloseTo(0.7, 5);
+  });
+
+  it('applies a pre-load volume exactly once after routing is established', async () => {
+    const { WebSound: Fresh } = loadFreshModule();
+    const sound = new Fresh(1, { volume: 1, isLooping: false, shouldPlay: false });
+
+    // This ordering is reachable in the real app: WebSoundFactory.createAsync
+    // resolves without awaiting load, so the master slider can drive
+    // setVolumeAsync before 'loadeddata' fires.
+    await sound.setVolumeAsync(0.7);
+
+    dispatchLoaded(lastAudio());
+    await sound.whenLoaded();
+
+    // Exactly one attenuation stage may be live. The pre-load write landed
+    // on the element; once the GainNode exists it owns volume and the
+    // element must be released back to 1. Otherwise both stages apply and
+    // output is 0.7 * 0.7 = 0.49.
+    expect(mocks.gainNodes[0].gain.value).toBeCloseTo(0.7, 5);
+    expect(lastAudio().volume).toBe(1);
+    expect(lastAudio().volume * mocks.gainNodes[0].gain.value).toBeCloseTo(0.7, 5);
   });
 });

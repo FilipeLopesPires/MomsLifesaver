@@ -168,6 +168,50 @@ describe('loadAsync', () => {
       }
     });
   });
+
+  it('unloads every sound when the hook unmounts after a successful load', async () => {
+    const view = await mount();
+    expect(load.handles.size).toBe(TRACK_LIBRARY.length);
+
+    view.unmount();
+
+    // Without the unmount cleanup these handles outlive the hook, each
+    // holding an open native player (or <audio> element on web).
+    await waitFor(() => {
+      for (const handle of load.handles.values()) {
+        expect(handle.unloadAsync).toHaveBeenCalledTimes(1);
+      }
+    });
+  });
+
+  it('unloads the survivors even when one track failed to load', async () => {
+    load.rejectFor.add('rain');
+    const view = await mount();
+
+    view.unmount();
+
+    await waitFor(() => {
+      for (const handle of load.handles.values()) {
+        expect(handle.unloadAsync).toHaveBeenCalledTimes(1);
+      }
+    });
+    expect(load.handles.has('rain')).toBe(false);
+  });
+
+  it('still unloads the rest when one sound rejects while unloading', async () => {
+    const view = await mount();
+    getHandle('rain').unloadAsync.mockRejectedValueOnce(new Error('remove failed'));
+
+    expect(() => view.unmount()).not.toThrow();
+
+    // Promise.all would abandon the batch at the first rejection; every
+    // handle after it would leak.
+    await waitFor(() => {
+      for (const handle of load.handles.values()) {
+        expect(handle.unloadAsync).toHaveBeenCalledTimes(1);
+      }
+    });
+  });
 });
 
 describe('toggleTrack: start-stopped branch', () => {

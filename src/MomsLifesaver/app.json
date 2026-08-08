@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "momslifesaver",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "dark",
     "newArchEnabled": false,
     "ios": {
       "supportsTablet": true,
@@ -35,7 +35,7 @@
       "package": "com.filipelopespires.MomsLifesaver"
     },
     "web": {
-      "output": "../../docs",
+      "output": "single",
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [

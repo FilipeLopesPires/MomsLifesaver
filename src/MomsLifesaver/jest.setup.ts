@@ -96,6 +96,15 @@ installAudioContext();
 (globalThis as unknown as { __installAudioContext: () => void }).__installAudioContext =
   installAudioContext;
 
+/**
+ * React Native's `__DEV__` global is injected by `react-native/jest/setup.js`,
+ * which only the `jest-expo` preset pulls in - i.e. only the "native" project.
+ * The "web" project runs plain jsdom, so anything importing `utils/logger`
+ * (nearly every suite) would throw `ReferenceError: __DEV__ is not defined`.
+ * Define it here so both projects agree.
+ */
+(globalThis as unknown as { __DEV__: boolean }).__DEV__ = true;
+
 // jsdom's HTMLAudioElement.play is not implemented. Stub it.
 if (typeof HTMLMediaElement !== 'undefined') {
   HTMLMediaElement.prototype.play = jest.fn(async () => {

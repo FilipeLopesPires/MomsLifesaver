@@ -72,6 +72,16 @@ const createSoundAsync = async (
   return NativeSoundFactory.createAsync(audioModule, options);
 };
 
+/**
+ * Release a batch of sound handles, tolerating individual failures.
+ * `Promise.all` would abandon the rest of the batch on the first
+ * rejection, leaking every player after it - which matters most on the
+ * unmount path, where nothing will ever retry.
+ */
+const unloadAllAsync = async (sounds: SoundHandle[]): Promise<void> => {
+  await Promise.allSettled(sounds.map((sound) => sound.unloadAsync()));
+};
+
 type ControllerState = {
   tracks: Partial<Record<TrackId, LoadedTrack>>;
   globalVolume: number;
@@ -127,6 +137,12 @@ export const useAudioController = () => {
   const [state, setState] = useState<ControllerState>(INITIAL_STATE);
   const mountedRef = useRef(true);
   const togglingTracksRef = useRef<Set<TrackId>>(new Set());
+  // Mirrors the loaded sound handles so the unmount cleanup can release
+  // them. A ref rather than `state.tracks` because the cleanup closure is
+  // created once (empty deps) and would otherwise capture the initial,
+  // empty state and unload nothing. The handles are assigned once at load
+  // and never replaced, so a plain array stays accurate.
+  const loadedSoundsRef = useRef<SoundHandle[]>([]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -169,9 +185,11 @@ export const useAudioController = () => {
         );
 
         if (!mountedRef.current) {
-          await Promise.all(entries.map(async ([, track]) => track.sound.unloadAsync()));
+          await unloadAllAsync(entries.map(([, track]) => track.sound));
           return;
         }
+
+      loadedSoundsRef.current = entries.map(([, track]) => track.sound);
 
       setState({
         tracks: Object.fromEntries(entries) as ControllerState['tracks'],
@@ -187,6 +205,13 @@ export const useAudioController = () => {
 
     return () => {
       mountedRef.current = false;
+      // Release every player we managed to load. Without this the
+      // handles outlive the hook: on native each one holds an open
+      // Media3/AVAudioEngine player, and on web an <audio> element that
+      // keeps its buffer alive.
+      const sounds = loadedSoundsRef.current;
+      loadedSoundsRef.current = [];
+      void unloadAllAsync(sounds);
     };
   }, []);
 
@@ -510,10 +535,6 @@ export const useAudioController = () => {
     }
   }, [state.tracks, pauseSelectedTracks, playSelectedTracks]);
 
-  const teardown = useCallback(async () => {
-    await Promise.all(Object.values(state.tracks).map((track) => track?.sound.unloadAsync()));
-  }, [state.tracks]);
-
   const publicTracks = useMemo(() => {
     return Object.fromEntries(
       Object.entries(state.tracks).map(([id, track]) => [
@@ -543,7 +564,6 @@ export const useAudioController = () => {
     pauseSelectedTracks,
     playSelectedTracks,
     toggleSelectedTracksPlayPause,
-    teardown,
   };
 };
 

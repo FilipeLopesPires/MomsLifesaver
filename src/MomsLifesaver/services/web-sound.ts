@@ -181,6 +181,17 @@ export class WebSound {
       this.gainNode.gain.value = this.pendingVolume;
       this.sourceNode.connect(this.gainNode);
       this.gainNode.connect(ctx.destination);
+      // From here the GainNode is the single attenuation stage. Any
+      // setVolumeAsync that landed before routing existed took the
+      // `else` branch and wrote the value to the element as well, so
+      // without this reset the volume would be applied twice
+      // (0.7 element x 0.7 gain = 0.49 output). pendingVolume already
+      // carries the value, so clearing the element loses nothing.
+      //
+      // This MUST stay below the isIOSWeb() guard above: iOS skips
+      // routing entirely and relies on element volume being the real
+      // control, so resetting it there would mute the sliders.
+      this.audio.volume = 1;
     } catch (error) {
       logError('[MomsLifesaver] WebSound failed to wire Web Audio routing:', this.uri, error);
     }
