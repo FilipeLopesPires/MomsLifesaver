@@ -45,6 +45,10 @@ app-example
 /ios
 /android
 
+# local Expo module build output (the Kotlin sources next to it ARE tracked)
+modules/*/android/build/
+modules/*/android/.cxx/
+
 # vscode
 .vscode/
 

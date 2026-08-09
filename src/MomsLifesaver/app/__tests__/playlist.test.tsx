@@ -57,13 +57,24 @@ jest.mock('@/hooks/use-audio-controller', () => ({
 const mockStartService = jest.fn();
 const mockStopService = jest.fn();
 const mockUpdateMetadata = jest.fn();
-const mockForegroundCapture: { onTogglePlayPause: (() => void) | null } = {
+const mockForegroundCapture: {
+  onTogglePlayPause: (() => void) | null;
+  onStop: (() => void) | null;
+} = {
   onTogglePlayPause: null,
+  onStop: null,
 };
 
 jest.mock('@/hooks/use-foreground-service', () => ({
-  useForegroundService: ({ onTogglePlayPause }: { onTogglePlayPause: () => void }) => {
+  useForegroundService: ({
+    onTogglePlayPause,
+    onStop,
+  }: {
+    onTogglePlayPause: () => void;
+    onStop?: () => void;
+  }) => {
     mockForegroundCapture.onTogglePlayPause = onTogglePlayPause;
+    mockForegroundCapture.onStop = onStop ?? null;
     return {
       startService: mockStartService,
       stopService: mockStopService,
@@ -317,39 +328,44 @@ describe('PlaylistScreen foreground-service integration', () => {
     expect(mockStartService).not.toHaveBeenCalled();
   });
 
-  it('starts the service BEFORE the first track is toggled (audio-focus ordering)', async () => {
+  it('starts the service when the first track is selected', async () => {
     render(<PlaylistScreen />);
 
     await pressTrack(FIRST_TRACK.id);
 
-    // Ordering is the whole point. KotlinAudio grabs AUDIOFOCUS_GAIN when
-    // the service starts, and expo-audio pauses every player on the
-    // resulting AUDIOFOCUS_LOSS. Last requester wins, so starting the
-    // service after toggleTrack silences the track the user just tapped -
-    // which is exactly the bug this ordering prevents.
+    // Ordering against toggleTrack used to be asserted here, because the old
+    // track-player service grabbed AUDIOFOCUS_GAIN on start and expo-audio
+    // paused every player on the resulting loss. The session's player owns no
+    // audio now and requests no focus, so there is no race left to protect -
+    // only that selecting a track brings the notification up.
     expect(mockStartService).toHaveBeenCalledTimes(1);
     expect(mockToggleTrack).toHaveBeenCalledTimes(1);
-    expect(mockStartService.mock.invocationCallOrder[0]).toBeLessThan(
-      mockToggleTrack.mock.invocationCallOrder[0],
-    );
   });
 
-  it('keeps the start-before-toggle ordering for every new selection', async () => {
+  it('starts the service for every new selection, leaving the dedup to the hook', async () => {
     render(<PlaylistScreen />);
 
     await pressTrack(FIRST_TRACK.id);
     await pressTrack(SECOND_TRACK.id);
 
-    // startService() is called per new selection; making the repeat calls
-    // cheap is the hook's job (it early-returns once the service is
-    // running, so TrackPlayer.play - and its AUDIOFOCUS_GAIN request -
-    // happens exactly once). What matters here is that each toggle is
-    // preceded by its start.
+    // Making the repeat calls cheap is the hook's job: it early-returns once
+    // the service is running.
     expect(mockStartService).toHaveBeenCalledTimes(2);
     expect(mockToggleTrack).toHaveBeenCalledTimes(2);
-    expect(mockStartService.mock.invocationCallOrder[1]).toBeLessThan(
-      mockToggleTrack.mock.invocationCallOrder[1],
-    );
+  });
+
+  it('routes the notification stop button to stopTrack for each selected track', async () => {
+    render(<PlaylistScreen />);
+    await pressTrack(FIRST_TRACK.id);
+    await pressTrack(SECOND_TRACK.id);
+
+    expect(mockForegroundCapture.onStop).not.toBeNull();
+    await act(async () => {
+      await mockForegroundCapture.onStop!();
+    });
+
+    expect(mockStopTrack).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId('footer-count').children[0]).toBe('0');
   });
 
   it('sets "Playing" metadata once a selected track is actually playing', async () => {

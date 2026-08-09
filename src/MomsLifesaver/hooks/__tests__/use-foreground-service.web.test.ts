@@ -6,9 +6,9 @@
  * emulate, so they are imported here by explicit path. That is deliberate:
  * what needs protecting is the *content* of the shims - that they are real
  * no-ops, that their export surface matches the Android hook, and that they
- * never drag react-native-track-player into a build that has no such native
- * module. Whether Metro selects the right file is Metro's job, and is
- * already exercised by `expo export -p web` and the EAS iOS build.
+ * never drag the Android-only `media-notification` module into a build that
+ * has no such native module. Whether Metro selects the right file is Metro's
+ * job, and is already exercised by `expo export -p web` and the EAS iOS build.
  */
 
 import { act, renderHook } from '@testing-library/react';
@@ -24,7 +24,7 @@ const variants = [
 ] as const;
 
 describe.each(variants)('%s foreground-service shim', (_platform, useShim) => {
-  const makeCallbacks = () => ({ onTogglePlayPause: jest.fn() });
+  const makeCallbacks = () => ({ onTogglePlayPause: jest.fn(), onStop: jest.fn() });
 
   it('exposes exactly the public surface the Android hook returns', () => {
     const { result } = renderHook(() => useShim(makeCallbacks()));
@@ -56,21 +56,23 @@ describe.each(variants)('%s foreground-service shim', (_platform, useShim) => {
     });
 
     expect(callbacks.onTogglePlayPause).not.toHaveBeenCalled();
+    expect(callbacks.onStop).not.toHaveBeenCalled();
   });
 });
 
-describe('foreground-service shims stay free of react-native-track-player', () => {
-  // The Android module calls TrackPlayer.registerPlaybackService() at module
-  // scope, so re-exporting from it by mistake would blow up at import time on
-  // any platform without the native module. Making the import itself throw is
-  // the only way to catch that.
+describe('foreground-service shims stay free of the native media module', () => {
+  // The Android hook imports `@/modules/media-notification`, whose Android
+  // entry point calls requireNativeModule() at module scope. Re-exporting from
+  // it by mistake would blow up at import time on any platform without the
+  // native module. Making the import itself throw is the only way to catch
+  // that.
   it.each([
     ['web', '@/hooks/use-foreground-service.web'],
     ['ios', '@/hooks/use-foreground-service.ios'],
-  ])('%s shim does not import RNTP', (_platform, modulePath) => {
+  ])('%s shim does not import the media-notification module', (_platform, modulePath) => {
     jest.isolateModules(() => {
-      jest.doMock('react-native-track-player', () => {
-        throw new Error('react-native-track-player must never be imported here');
+      jest.doMock('@/modules/media-notification', () => {
+        throw new Error('@/modules/media-notification must never be imported here');
       });
 
       expect(() => require(modulePath)).not.toThrow();

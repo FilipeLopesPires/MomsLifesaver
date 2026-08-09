@@ -1,56 +1,44 @@
 /**
  * Android-only foreground service hook.
  *
- * Uses `react-native-track-player` to host a long-lived media-style
- * notification while the user has tracks selected. The notification lets
- * Android keep the app alive for background audio and exposes a
- * play/pause remote action that maps back to `onTogglePlayPause`.
+ * Drives the local `media-notification` Expo module: a `MediaSessionService`
+ * whose Player owns no audio. The service keeps Android from killing the
+ * process while tracks play in the background, and media3 builds the
+ * MediaStyle notification (and the lock-screen / Bluetooth controls) from the
+ * session.
  *
- * The real audio is produced by `useAudioController`; this hook only
- * plays a silent looping track at volume 0 so the foreground service
- * stays active and the notification can carry the current metadata.
+ * The real audio is produced by `useAudioController` (expo-audio). The two
+ * layers no longer compete: the stub player has no audio pipeline, so it never
+ * requests AudioFocus, so `updateMetadata` may sync the play/pause icon as
+ * often as playback changes. The previous track-player-based implementation
+ * could not - every icon sync stole focus and silenced the real audio - which
+ * is why the notification used to show a permanently wrong icon.
  *
- * Initialization is lazy: `TrackPlayer.setupPlayer()` and the initial
- * silent-track `add()` only run the first time the caller invokes
- * `startService()`.
+ * Initialization is lazy: the POST_NOTIFICATIONS prompt only runs the first
+ * time the caller invokes `startService()` or `updateMetadata()`, so the app
+ * does not ask for notifications before the user has played anything.
  *
- * AudioFocus is the whole game here, and the two stacks do NOT share a
- * session - RNTP runs KotlinAudio on legacy ExoPlayer2 while expo-audio
- * runs AndroidX Media3, as two independent AudioManager clients. Two
- * rules follow, and breaking either one silences the app:
- *
- *   1. KotlinAudio requests AUDIOFOCUS_GAIN whenever its player starts.
- *      expo-audio's AudioModule responds to AUDIOFOCUS_LOSS by pausing
- *      *every* player it owns. Since the last requester wins, the silent
- *      holding track must start BEFORE any real track - see the
- *      `startService()` await in `app/playlist.tsx`.
- *   2. Nothing after that may touch RNTP's transport. `updateMetadata`
- *      uses `updateNowPlayingMetadata` only; an innocuous-looking
- *      `play()` to sync the notification icon re-requests focus and
- *      kills playback again, once per track selection.
- *
- * Consequence of (2): the notification icon tracks RNTP's own state
- * (always playing) rather than ours. The button still works, because the
- * fork sets `interceptPlayerActionsTriggeredExternally`, so remote
- * actions only emit events instead of driving the transport.
- *
- * On web, the companion file `use-foreground-service.web.ts` exports
- * no-op implementations so the rest of the app code stays platform-
- * agnostic.
+ * On web and iOS the companion files export no-op implementations so the rest
+ * of the app stays platform-agnostic.
  */
 import { useEffect, useCallback, useRef } from 'react';
-import { Platform, DeviceEventEmitter } from 'react-native';
-import TrackPlayer, { Capability, AppKilledPlaybackBehavior, RepeatMode } from 'react-native-track-player';
-import { FOREGROUND_EVENTS, PlaybackService } from '@/services/playback-service';
+import { PermissionsAndroid, Platform } from 'react-native';
+import MediaNotification from '@/modules/media-notification';
 import { log } from '@/utils/logger';
 import { handleError, handleErrorSilent } from '@/utils/error-handler';
 
-const SilenceAudio = require('@/assets/audio/silence.m4a');
+const DEFAULT_METADATA = {
+  title: "Mom's Lifesaver",
+  artist: 'Ready to play',
+  isPlaying: false,
+};
 
-TrackPlayer.registerPlaybackService(() => PlaybackService);
+// POST_NOTIFICATIONS became a runtime permission in Android 13 (API 33).
+const ANDROID_13 = 33;
 
 type ForegroundServiceCallbacks = {
   onTogglePlayPause: () => void;
+  onStop?: () => void;
 };
 
 export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
@@ -58,15 +46,20 @@ export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
   const isServiceRunning = useRef(false);
   const setupPromiseRef = useRef<Promise<boolean> | null>(null);
   const callbacksRef = useRef(callbacks);
+  const currentMetadataRef = useRef(DEFAULT_METADATA);
 
   // Keep callbacks ref up to date
   useEffect(() => {
     callbacksRef.current = callbacks;
   }, [callbacks]);
 
-  // Lazy setup: the first caller triggers TrackPlayer.setupPlayer() and
-  // the silent holding track. Subsequent calls reuse the cached promise.
-  // Returns true iff setup succeeded (so callers can short-circuit).
+  // Lazy setup: the first caller triggers the POST_NOTIFICATIONS prompt.
+  // Subsequent calls reuse the cached promise. Returns true iff the service
+  // may be started (so callers can short-circuit).
+  //
+  // A denied permission is NOT a failure. The service still runs and still
+  // keeps background audio alive; only the notification is hidden. Blocking
+  // here would trade a missing notification for missing audio.
   const ensureInitialized = useCallback(async (): Promise<boolean> => {
     if (Platform.OS !== 'android') return false;
     if (isInitialized.current) return true;
@@ -74,49 +67,22 @@ export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
 
     const run = async (): Promise<boolean> => {
       try {
-        log('[ForegroundService] Setting up TrackPlayer (lazy)');
-
-        await TrackPlayer.setupPlayer({
-          autoHandleInterruptions: false,
-        });
-
-        await TrackPlayer.updateOptions({
-          capabilities: [Capability.Play, Capability.Pause],
-          compactCapabilities: [Capability.Play, Capability.Pause],
-          notificationCapabilities: [Capability.Play, Capability.Pause],
-          progressUpdateEventInterval: 0,
-          android: {
-            appKilledPlaybackBehavior: AppKilledPlaybackBehavior.StopPlaybackAndRemoveNotification,
-            // Expo-audio owns AudioFocus for the real tracks. Do not let
-            // RNTP auto-pause the silent queue on transient interruptions
-            // or we'll flicker the notification state.
-            alwaysPauseOnInterruption: false,
-          },
-          // Notification accent color (matches app theme #6C8CFF)
-          color: 0x6C8CFF,
-        });
-
-        // Add silent track that will be "played" to maintain foreground service
-        // Duration: 0 hides the progress bar in the notification
-        await TrackPlayer.add({
-          id: 'silence',
-          url: SilenceAudio,
-          title: "Mom's Lifesaver",
-          artist: 'Ready to play',
-          duration: 0,
-        });
-
-        // Loop the silent track so it never ends
-        await TrackPlayer.setRepeatMode(RepeatMode.Track);
-
-        // Set volume to 0 to avoid any audio interference
-        await TrackPlayer.setVolume(0);
+        if (Number(Platform.Version) >= ANDROID_13) {
+          const result = await PermissionsAndroid.request(
+            PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+          );
+          if (result !== PermissionsAndroid.RESULTS.GRANTED) {
+            // Worth logging loudly: without it the service runs and the
+            // notification is silently hidden, which looks exactly like the
+            // feature being broken.
+            log('[ForegroundService] POST_NOTIFICATIONS denied - notification will be hidden');
+          }
+        }
 
         isInitialized.current = true;
-        log('[ForegroundService] TrackPlayer setup complete');
         return true;
       } catch (error) {
-        handleError(error, 'foreground-service', 'Failed to setup TrackPlayer');
+        handleError(error, 'foreground-service', 'Failed to request notification permission');
         // Allow a later caller to retry.
         setupPromiseRef.current = null;
         return false;
@@ -132,29 +98,35 @@ export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
     if (Platform.OS !== 'android') return;
 
     return () => {
-      if (isInitialized.current) {
-        TrackPlayer.reset().catch(() => {});
+      if (isServiceRunning.current) {
+        try {
+          MediaNotification.stop();
+        } catch {
+          // Nothing useful to do while tearing down.
+        }
       }
     };
   }, []);
 
-  // Store the current metadata for re-applying after track loops
-  const currentMetadataRef = useRef({ title: "Mom's Lifesaver", artist: 'Ready to play', isPlaying: false });
-
-  // Listen for notification button events (Android only)
+  // Listen for remote control events - notification, lock screen, Bluetooth
+  // headset. Subscribed on mount, independent of lazy setup, so a button press
+  // is never dropped because the prompt has not run yet.
   useEffect(() => {
     if (Platform.OS !== 'android') return;
 
-    const toggleSub = DeviceEventEmitter.addListener(
-      FOREGROUND_EVENTS.TOGGLE_PLAY_PAUSE,
-      () => {
-        log('[ForegroundService] Received TOGGLE_PLAY_PAUSE event from notification');
-        callbacksRef.current.onTogglePlayPause();
-      }
-    );
+    const toggleSub = MediaNotification.addListener('onTogglePlayPause', () => {
+      log('[ForegroundService] Received onTogglePlayPause from the media session');
+      callbacksRef.current.onTogglePlayPause();
+    });
+
+    const stopSub = MediaNotification.addListener('onStop', () => {
+      log('[ForegroundService] Received onStop from the media session');
+      callbacksRef.current.onStop?.();
+    });
 
     return () => {
       toggleSub.remove();
+      stopSub.remove();
     };
   }, []);
 
@@ -174,7 +146,8 @@ export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
 
     try {
       log('[ForegroundService] Starting foreground service');
-      await TrackPlayer.play();
+      const { title, artist, isPlaying } = currentMetadataRef.current;
+      MediaNotification.start(title, artist, isPlaying);
       isServiceRunning.current = true;
     } catch (error) {
       handleErrorSilent(error, 'foreground-service', 'Failed to start service');
@@ -182,71 +155,59 @@ export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
   }, [ensureInitialized]);
 
   // Stop the foreground service (hides notification).
-  // No-op if the service was never started (setup never ran).
+  // No-op if the service was never started.
   const stopService = useCallback(async () => {
     if (Platform.OS !== 'android') return;
     if (!isInitialized.current || !isServiceRunning.current) return;
 
     try {
       log('[ForegroundService] Stopping foreground service');
-      await TrackPlayer.pause();
+      MediaNotification.stop();
       isServiceRunning.current = false;
+      // Reset so the next startService() seeds from defaults rather than
+      // from a stale mix, and so the dedup check below cannot swallow the
+      // first update after a restart.
+      currentMetadataRef.current = DEFAULT_METADATA;
     } catch (error) {
       handleErrorSilent(error, 'foreground-service', 'Failed to stop service');
     }
   }, []);
 
-  // Update the notification metadata by replacing the track.
+  // Update the notification's metadata and play/pause icon.
   // Triggers lazy setup on first call.
-  // isAudioPlaying: true = audio is playing (show Pause icon), false = audio is paused (show Play icon)
-  const updateMetadata = useCallback(async (title: string, artist: string, isAudioPlaying: boolean = true) => {
-    if (Platform.OS !== 'android') return;
-    const ready = await ensureInitialized();
-    if (!ready) return;
+  // isAudioPlaying: true = audio is playing (show Pause icon), false = audio
+  // is paused (show Play icon).
+  const updateMetadata = useCallback(
+    async (title: string, artist: string, isAudioPlaying: boolean = true) => {
+      if (Platform.OS !== 'android') return;
+      const ready = await ensureInitialized();
+      if (!ready) return;
 
-    // Skip if metadata hasn't changed
-    if (
-      currentMetadataRef.current.title === title &&
-      currentMetadataRef.current.artist === artist &&
-      currentMetadataRef.current.isPlaying === isAudioPlaying
-    ) {
-      return;
-    }
+      // Skip if nothing changed
+      if (
+        currentMetadataRef.current.title === title &&
+        currentMetadataRef.current.artist === artist &&
+        currentMetadataRef.current.isPlaying === isAudioPlaying
+      ) {
+        return;
+      }
 
-    currentMetadataRef.current = { title, artist, isPlaying: isAudioPlaying };
+      currentMetadataRef.current = { title, artist, isPlaying: isAudioPlaying };
 
-    try {
-      // Update the notification's displayed metadata in place. This is
-      // deliberately non-destructive: we do not call reset/add/play here,
-      // because that sequence re-requests AudioFocus and disturbs the
-      // expo-audio players that are producing the actual audio.
-      // Duration: 0 hides the progress bar in the notification.
-      await TrackPlayer.updateNowPlayingMetadata({
-        title,
-        artist,
-        duration: 0,
-      });
+      try {
+        // `isAudioPlaying` is propagated on purpose, and this is the fix for
+        // the wrong-icon bug: the session's player owns no audio, so pushing
+        // playback state costs nothing and steals no AudioFocus. Do not
+        // reintroduce a "metadata only" variant here.
+        MediaNotification.update(title, artist, isAudioPlaying);
 
-      // NOTE: deliberately does NOT call TrackPlayer.play()/pause() to sync
-      // the notification's play/pause icon.
-      //
-      // KotlinAudio requests AUDIOFOCUS_GAIN every time its player starts.
-      // expo-audio's AudioModule reacts to the resulting AUDIOFOCUS_LOSS by
-      // pausing *every* player it owns, so a play() here silenced all the
-      // real audio - once per track selection, since this runs on every
-      // metadata change. RNTP's silent holding track is started exactly
-      // once, by startService(), before any real playback begins.
-      //
-      // Consequence: the notification icon reflects RNTP's own (always
-      // playing) state rather than ours. The button still works, because
-      // the fork sets interceptPlayerActionsTriggeredExternally, so remote
-      // actions only emit events instead of driving RNTP's transport.
-
-      log('[ForegroundService] Updated metadata:', title, '-', artist, '- Playing:', isAudioPlaying);
-    } catch (error) {
-      handleErrorSilent(error, 'foreground-service', 'Failed to update metadata');
-    }
-  }, [ensureInitialized]);
+        log('[ForegroundService] Updated metadata:', title, '-', artist, '- Playing:', isAudioPlaying);
+      } catch (error) {
+        handleErrorSilent(error, 'foreground-service', 'Failed to update metadata');
+      }
+    },
+    [ensureInitialized],
+  );
 
   return {
     startService,

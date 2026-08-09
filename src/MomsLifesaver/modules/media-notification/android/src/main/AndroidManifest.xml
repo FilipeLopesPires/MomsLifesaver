@@ -1,0 +1,24 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+  <application>
+    <!--
+      Fully qualified on purpose: the manifest merger resolves a relative
+      ".Name" against the *application's* package, not this library's
+      namespace, so ".MediaNotificationService" would point at
+      com.filipelopespires.MomsLifesaver.MediaNotificationService.
+
+      exported="true" is required - the system media-button dispatcher and
+      Bluetooth headsets bind to this service from outside the app.
+    -->
+    <service
+      android:name="expo.modules.medianotification.MediaNotificationService"
+      android:exported="true"
+      android:foregroundServiceType="mediaPlayback">
+      <intent-filter>
+        <action android:name="androidx.media3.session.MediaSessionService" />
+        <action android:name="android.intent.action.MEDIA_BUTTON" />
+      </intent-filter>
+    </service>
+  </application>
+
+</manifest>

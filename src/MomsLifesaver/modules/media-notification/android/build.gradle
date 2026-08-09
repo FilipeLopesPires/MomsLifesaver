@@ -1,0 +1,35 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.medianotification'
+version = '0.1.0'
+
+android {
+  namespace "expo.modules.medianotification"
+  defaultConfig {
+    versionCode 1
+    versionName "0.1.0"
+  }
+
+  lint {
+    abortOnError false
+    // SimpleBasePlayer is @UnstableApi. That is the whole reason this module
+    // can exist - see StubPlayer.kt.
+    disable 'UnsafeOptInUsageError'
+  }
+}
+
+repositories {
+  mavenCentral()
+}
+
+dependencies {
+  // PINNED, deliberately: 1.4.0 is the exact media3 version expo-audio pulls
+  // for media3-exoplayer. Mixed media3 versions do not fail at build time -
+  // they fail at runtime with NoSuchMethodError, which is a far worse day.
+  // Verify with `./gradlew :app:dependencies | grep media3` after bumping
+  // expo-audio.
+  implementation "androidx.media3:media3-session:1.4.0"
+}

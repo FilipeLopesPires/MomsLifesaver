@@ -14,10 +14,9 @@
  * starting cue on fresh plays; resumed tracks keep their position.
  *
  * Native playback is backed by `expo-audio` (AndroidX Media3 on Android,
- * AVAudioEngine on iOS). This shares a single MediaSession with
- * `react-native-track-player`'s foreground-service notification, so the
- * two stacks no longer fight over AudioFocus the way expo-av + RNTP
- * used to.
+ * AVAudioEngine on iOS), and is the process's only AudioFocus requester.
+ * The Android notification comes from `hooks/use-foreground-service.ts`,
+ * whose media session owns no audio and therefore never competes for focus.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, AppState } from 'react-native';

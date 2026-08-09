@@ -71,7 +71,7 @@ The app is built with [Expo](https://expo.dev) and [React Native](https://reactn
    - Press `a` for Android (requires the development build to be installed - see [Running on Android (development build)](#running-on-android-development-build))
    - Press `i` for iOS (requires the development build to be installed on the simulator/device)
 
-   Note: Expo Go is **not** supported for this project because `react-native-track-player` is not bundled with Expo Go. You must install a custom development build.
+   Note: Expo Go is **not** supported for this project because it ships its own native code (the local `media-notification` module). You must install a custom development build.
 
 ### Development Scripts
 
@@ -91,7 +91,7 @@ Run these from `src/MomsLifesaver/` (all `npm run` commands execute from that di
 
 ### Running on Android (development build)
 
-This project uses `expo-dev-client` and ships native modules (notably `react-native-track-player`) that are **not** in Expo Go. You need to install a custom development build APK on the target device or emulator once, then `npm run android` connects Metro to it.
+This project uses `expo-dev-client` and ships native modules (notably the local `modules/media-notification/` Expo module) that are **not** in Expo Go. You need to install a custom development build APK on the target device or emulator once, then `npm run android` connects Metro to it.
 
 #### 1. Android Studio emulator (on your PC)
 
@@ -158,6 +158,9 @@ You only need to re-run `npm run build:android:dev` when:
 
 - You add/remove a native module (anything in `dependencies` that touches native code).
 - You change `app.json` native config (permissions, plugins, package name, manifest icons, etc.).
+- You touch anything under `modules/media-notification/android/` - Kotlin sources
+  and that module's `AndroidManifest.xml` are compiled into the APK, so Metro's
+  hot reload does not cover them.
 
 For pure JS/TSX edits, just keep Metro running - the dev build hot-reloads.
 
@@ -165,7 +168,7 @@ For pure JS/TSX edits, just keep Metro running - the dev build hot-reloads.
 
 Tests are run with [Jest](https://jestjs.io/) and split into two projects:
 
-- **web** (jsdom): pure TypeScript logic under `constants/`, `utils/`, `services/`, and `hooks/`
+- **web** (jsdom): pure TypeScript logic under `constants/`, `utils/`, `services/`, `hooks/`, and `modules/`
 - **native** (`jest-expo`): React component tests under `components/` and `app/`
 
 Run all tests:
@@ -286,13 +289,41 @@ right file at build time based on the platform:
 | ------------------------------------- | ------------------------------ | -------------------------------- |
 | Sound wrapper (audio engine adapter)  | `services/native-sound.ts` (expo-audio / Media3) | `services/web-sound.ts` (HTMLAudioElement + Web Audio) |
 | Foreground service hook               | `hooks/use-foreground-service.ts`      | `hooks/use-foreground-service.web.ts` |
-| Playback service (notification glue)  | `services/playback-service.ts`         | `services/playback-service.web.ts`    |
+| Media notification module             | `modules/media-notification/index.ts` (Android) | `modules/media-notification/index.web.ts` |
 
 Native audio runs on `expo-audio` (AndroidX Media3 on Android, AVAudioEngine on
-iOS), which shares a single media session with `react-native-track-player`'s
-foreground-service notification. That shared session is what lets multiple
-tracks mix simultaneously without the AudioFocus churn that affected earlier
-`expo-av`-based builds.
+iOS). That single engine is what lets multiple tracks mix simultaneously
+without the AudioFocus churn that affected earlier `expo-av`-based builds.
+
+### The media notification (Android)
+
+`modules/media-notification/` is a local Expo module wrapping an
+`androidx.media3.session.MediaSessionService`. It provides the notification,
+lock-screen controls and Bluetooth headset controls, and - importantly - the
+foreground service that keeps the process alive while audio plays in the
+background.
+
+Its `Player` is a **stub that owns no audio**. media3 requires a `Player` to
+build a session from, but nothing requires that player to produce sound, and
+AudioFocus is only requested by `ExoPlayer` when it is configured with audio
+attributes. Since `StubPlayer` has no audio pipeline, it never requests focus,
+so expo-audio keeps it uncontested and the session state can be repainted on
+every playback change. This is what makes the notification's play/pause icon
+match the app's actual state.
+
+The invariant to protect: **exactly one AudioFocus requester in the process.**
+`adb logcat | grep -i audiofocus` should show only the expo-audio client. Do
+not add an `ExoPlayer`, `AudioAttributes` or `AudioManager` to `StubPlayer`.
+
+`androidx.media3:media3-session` is pinned in
+`modules/media-notification/android/build.gradle` to the exact version
+expo-audio pulls for `media3-exoplayer` (currently `1.4.0`). Mixed media3
+versions fail at runtime with `NoSuchMethodError`, not at build time - after
+bumping expo-audio, re-pin and check with
+`./gradlew :app:dependencies --configuration debugRuntimeClasspath | grep media3`.
+
+iOS gets a no-op shim; `MPNowPlayingInfoCenter` support is separate follow-up
+work.
 
 ---
 
@@ -355,8 +386,8 @@ Found a bug or have a suggestion? Please [open an issue](https://github.com/Fili
 - [ ] (P1) Smooth volume adjustment (instead of instant)
 - [ ] (P1) Playback timer with smooth fade-out
 - [ ] (P2) Persistence of user's last volumes and timer settings
-- [ ] (P2) Lock screen app controls
-- [ ] (P2) App notifications and top bar controls
+- [x] (P2) Lock screen app controls (Android)
+- [x] (P2) App notifications and top bar controls (Android)
 - [ ] (P3) Upgraded audio playlist
 - [ ] (P3) Custom audio in-app upload
 

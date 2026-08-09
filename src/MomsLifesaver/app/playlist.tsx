@@ -38,9 +38,30 @@ export default function PlaylistScreen() {
     }
   }, [toggleSelectedTracksPlayPause]);
 
+  const handleStopAll = useCallback(async () => {
+    try {
+      // Stop all selected tracks using the dedicated stopTrack function
+      await Promise.all(
+        selectedTrackIdsRef.current.map(async (trackId) => {
+          try {
+            await stopTrack(trackId);
+          } catch (error) {
+            log("[MomsLifesaver] Error stopping track:", trackId, error);
+          }
+        })
+      );
+
+      // Clear selection
+      setSelectedTrackIds([]);
+    } catch (error) {
+      log("[MomsLifesaver] Error stopping all tracks:", error);
+    }
+  }, [stopTrack]);
+
   // Initialize foreground service (Android only)
   const { startService, stopService, updateMetadata } = useForegroundService({
     onTogglePlayPause: handleForegroundToggle,
+    onStop: handleStopAll,
   });
 
   // Check if any selected track is currently playing
@@ -60,33 +81,21 @@ export default function PlaylistScreen() {
   useWebMediaSession(
     {
       onTogglePlayPause: handleForegroundToggle,
-      onStop: () => {
-        const currentSelected = selectedTrackIdsRef.current;
-        Promise.all(currentSelected.map(trackId => stopTrack(trackId)));
-        setSelectedTrackIds([]);
-      },
+      onStop: handleStopAll,
     },
     isAnySelectedTrackPlaying,
     selectedTrackNames as string[]
   );
 
-  // Track if foreground service has been started for current session
-  const serviceStartedRef = useRef(false);
-
-  // Keep the notification's metadata in step with playback.
-  //
-  // Starting the service is NOT done here any more. It used to run on a
-  // 300ms timer after playback began, which put RNTP's AUDIOFOCUS_GAIN
-  // request *after* expo-audio's - and since the last requester wins, that
-  // silenced every track a moment after it started. handleTrackPress now
-  // awaits startService() before the first track plays instead.
+  // Keep the notification's metadata and play/pause icon in step with
+  // playback. The session's player owns no audio, so pushing state here is
+  // free - see hooks/use-foreground-service.ts.
   useEffect(() => {
     if (isAnySelectedTrackPlaying) {
       const trackNamesText = selectedTrackNames.length > 0
         ? selectedTrackNames.join(', ')
         : "Mom's Lifesaver";
       updateMetadata(trackNamesText, 'Playing', true);
-      serviceStartedRef.current = true;
     } else if (selectedTrackIds.length > 0) {
       // Tracks selected but paused
       const trackNamesText = selectedTrackNames.join(', ') || "Mom's Lifesaver";
@@ -94,25 +103,20 @@ export default function PlaylistScreen() {
     } else {
       // No tracks selected, stop the service
       stopService();
-      serviceStartedRef.current = false;
     }
   }, [isAnySelectedTrackPlaying, selectedTrackNames, selectedTrackIds.length, stopService, updateMetadata]);
 
   // Get safe area insets to account for OS UI elements
   const insets = useSafeAreaInsets();
 
-  const handleTrackPress = useCallback(async (track: TrackMetadata) => {
-    // Audio-focus ordering, and the reason this await exists.
-    //
-    // KotlinAudio (react-native-track-player) requests AUDIOFOCUS_GAIN when
-    // its player starts. expo-audio's AudioModule responds to the resulting
-    // AUDIOFOCUS_LOSS by pausing every player it owns. Whoever requests
-    // focus LAST wins, so the foreground service must claim it *before* the
-    // first real track starts - otherwise it silences the track the user
-    // just tapped. startService() is a no-op once the service is running,
-    // so this only costs anything on the first selection.
+  const handleTrackPress = useCallback((track: TrackMetadata) => {
+    // Fire-and-forget: the service exists to keep background audio alive and
+    // to carry the notification, and it requests no AudioFocus of its own, so
+    // nothing depends on it starting before playback does. It used to have to
+    // win a focus race against expo-audio, which is why this was awaited.
+    // startService() is a no-op once the service is running.
     if (!selectedTrackIdsRef.current.includes(track.id)) {
-      await startService();
+      startService();
     }
 
     setSelectedTrackIds((previous) => {
@@ -169,26 +173,6 @@ export default function PlaylistScreen() {
       log("[MomsLifesaver] Error toggling selected tracks play/pause:", error);
     }
   }, [toggleSelectedTracksPlayPause]);
-
-  const handleStopAll = useCallback(async () => {
-    try {
-      // Stop all selected tracks using the dedicated stopTrack function
-      await Promise.all(
-        selectedTrackIdsRef.current.map(async (trackId) => {
-          try {
-            await stopTrack(trackId);
-          } catch (error) {
-            log("[MomsLifesaver] Error stopping track:", trackId, error);
-          }
-        })
-      );
-
-      // Clear selection
-      setSelectedTrackIds([]);
-    } catch (error) {
-      log("[MomsLifesaver] Error stopping all tracks:", error);
-    }
-  }, [stopTrack]);
 
   return (
     <View style={styles.container}>

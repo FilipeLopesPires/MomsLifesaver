@@ -2,7 +2,7 @@
   "expo": {
     "name": "MomsLifesaver",
     "slug": "MomsLifesaver",
-    "version": "1.0.4",
+    "version": "1.0.5",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "momslifesaver",
@@ -27,7 +27,8 @@
         "android.permission.MODIFY_AUDIO_SETTINGS",
         "android.permission.WAKE_LOCK",
         "android.permission.FOREGROUND_SERVICE",
-        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "android.permission.POST_NOTIFICATIONS"
       ],
       "package": "com.filipelopespires.MomsLifesaver"
     },

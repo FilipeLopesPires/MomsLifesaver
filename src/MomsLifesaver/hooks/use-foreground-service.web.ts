@@ -1,5 +1,6 @@
 type ForegroundServiceCallbacks = {
   onTogglePlayPause: () => void;
+  onStop?: () => void;
 };
 
 export const useForegroundService = (_callbacks: ForegroundServiceCallbacks) => {
