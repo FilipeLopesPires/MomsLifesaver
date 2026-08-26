@@ -16,6 +16,7 @@ export type MediaNotificationEventPayload = {
 export type MediaNotificationEvents = {
   onTogglePlayPause: (payload: MediaNotificationEventPayload) => void;
   onStop: (payload: MediaNotificationEventPayload) => void;
+  onSleepTimerTick: () => void;
 };
 
 const noopSubscription = { remove: () => {} };
@@ -24,6 +25,8 @@ const MediaNotificationModule = {
   start(_title: string, _artist: string, _isPlaying: boolean) {},
   update(_title: string, _artist: string, _isPlaying: boolean) {},
   stop() {},
+  startTick(_intervalMs: number) {},
+  stopTick() {},
   addListener<EventName extends keyof MediaNotificationEvents>(
     _eventName: EventName,
     _listener: MediaNotificationEvents[EventName],

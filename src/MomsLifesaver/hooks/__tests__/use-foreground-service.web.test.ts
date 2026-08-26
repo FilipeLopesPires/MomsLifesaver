@@ -16,7 +16,14 @@ import { act, renderHook } from '@testing-library/react';
 import { useForegroundService as webForegroundService } from '@/hooks/use-foreground-service.web';
 import { useForegroundService as iosForegroundService } from '@/hooks/use-foreground-service.ios';
 
-const EXPECTED_SURFACE = ['isInitialized', 'startService', 'stopService', 'updateMetadata'];
+const EXPECTED_SURFACE = [
+  'isInitialized',
+  'startService',
+  'startTick',
+  'stopService',
+  'stopTick',
+  'updateMetadata',
+];
 
 const variants = [
   ['web', webForegroundService],
@@ -42,6 +49,8 @@ describe.each(variants)('%s foreground-service shim', (_platform, useShim) => {
       await expect(
         result.current.updateMetadata('Rain', 'Playing', true),
       ).resolves.toBeUndefined();
+      expect(result.current.startTick(250)).toBeUndefined();
+      expect(result.current.stopTick()).toBeUndefined();
     });
   });
 

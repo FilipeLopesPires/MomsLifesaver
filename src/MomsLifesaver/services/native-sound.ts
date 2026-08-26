@@ -25,6 +25,25 @@ import { createAudioPlayer } from 'expo-audio';
 
 import { log, logError, logWarn } from '@/utils/logger';
 
+/**
+ * expo-audio's native `AudioPlayer.setVolume()` has a bug on Android: when
+ * called with EXACTLY 0 on a non-muted player (which is every player in this
+ * app - we never touch the `muted` property), it does not silence the
+ * player. It sets the volume to `previousVolume` instead, which defaults to
+ * `1f` and is only ever updated by the mute/unmute path we never use - so
+ * the first literal-0 write jumps the player to FULL volume. See
+ * `node_modules/expo-audio/android/.../AudioPlayer.kt`, `setVolume()`:
+ * `ref.volume = if (boundedVolume > 0) boundedVolume else previousVolume`.
+ *
+ * Nudging a literal 0 to a value this small keeps the `> 0` branch (the
+ * correct, instantaneous write) while being genuinely inaudible. This isn't
+ * a sleep-timer-specific workaround: it protects every write of 0 through
+ * this wrapper, including the fade landing on silence and a user dragging
+ * any volume slider all the way down.
+ */
+export const NEAR_SILENT_VOLUME = 0.0001;
+const safeVolume = (value: number): number => (value <= 0 ? NEAR_SILENT_VOLUME : value);
+
 type CreateOptions = {
   volume?: number;
   isLooping?: boolean;
@@ -181,7 +200,7 @@ export const NativeSoundFactory = {
     log('[NativeSound]', label, 'creating player');
     const player = createAudioPlayer(audioModule) as unknown as AudioPlayerLike;
     player.loop = options.isLooping ?? false;
-    player.volume = options.volume ?? 1;
+    player.volume = safeVolume(options.volume ?? 1);
 
     attachDiagnosticLogs(player, label);
 
@@ -212,7 +231,7 @@ export const NativeSoundFactory = {
         }
       },
       setVolumeAsync: async (value: number) => {
-        player.volume = value;
+        player.volume = safeVolume(value);
       },
       setPositionAsync: async (positionMillis: number) => {
         try {

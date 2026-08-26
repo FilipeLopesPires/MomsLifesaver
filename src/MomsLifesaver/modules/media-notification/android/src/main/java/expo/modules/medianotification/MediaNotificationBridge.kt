@@ -17,6 +17,7 @@ object MediaNotificationBridge {
 
   const val EVENT_TOGGLE_PLAY_PAUSE = "onTogglePlayPause"
   const val EVENT_STOP = "onStop"
+  const val EVENT_TICK = "onSleepTimerTick"
 
   const val DEFAULT_TITLE = "Mom's Lifesaver"
   const val DEFAULT_ARTIST = "Ready to play"
@@ -35,6 +36,49 @@ object MediaNotificationBridge {
   /** Set while the JS runtime owning the module is alive. */
   @Volatile
   var onRemoteCommand: ((event: String, playWhenReady: Boolean) -> Unit)? = null
+
+  /**
+   * Set while the JS runtime owning the module is alive. Fired by
+   * [tickRunnable] on the cadence given to [startTicking].
+   */
+  @Volatile
+  var onTick: (() -> Unit)? = null
+
+  private var tickIntervalMs: Long = 0L
+
+  @Volatile
+  private var ticking = false
+
+  // Self-rescheduling: only reposts while `ticking` is true, so a single
+  // stopTicking() call is enough to end the chain rather than needing to
+  // track/cancel a fresh Runnable each cycle.
+  private val tickRunnable = object : Runnable {
+    override fun run() {
+      if (!ticking) return
+      onTick?.invoke()
+      mainHandler.postDelayed(this, tickIntervalMs)
+    }
+  }
+
+  /**
+   * Starts (or re-cadences) the periodic [EVENT_TICK] emission, driven by a
+   * plain main-looper [Handler] rather than a JS timer - this is what keeps
+   * the sleep-timer fade advancing while the app is backgrounded, since React
+   * Native stops dispatching JS `setInterval` callbacks the instant the host
+   * activity pauses, independent of this module's foreground service.
+   */
+  fun startTicking(intervalMs: Long) {
+    tickIntervalMs = intervalMs
+    if (ticking) return
+    ticking = true
+    mainHandler.postDelayed(tickRunnable, tickIntervalMs)
+  }
+
+  /** Safe to call even when not currently ticking. */
+  fun stopTicking() {
+    ticking = false
+    mainHandler.removeCallbacks(tickRunnable)
+  }
 
   fun setMetadata(title: String, artist: String, isPlaying: Boolean) {
     metadata = Metadata(title, artist, isPlaying)

@@ -39,6 +39,8 @@ const ANDROID_13 = 33;
 type ForegroundServiceCallbacks = {
   onTogglePlayPause: () => void;
   onStop?: () => void;
+  /** Fired on the native tick cadence started by `startTick`. */
+  onTick?: () => void;
 };
 
 export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
@@ -124,9 +126,14 @@ export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
       callbacksRef.current.onStop?.();
     });
 
+    const tickSub = MediaNotification.addListener('onSleepTimerTick', () => {
+      callbacksRef.current.onTick?.();
+    });
+
     return () => {
       toggleSub.remove();
       stopSub.remove();
+      tickSub.remove();
     };
   }, []);
 
@@ -209,10 +216,33 @@ export const useForegroundService = (callbacks: ForegroundServiceCallbacks) => {
     [ensureInitialized],
   );
 
+  // Start the periodic onSleepTimerTick event (native Handler cadence, not a
+  // JS timer - see MediaNotification.startTick for why this matters).
+  const startTick = useCallback((intervalMs: number) => {
+    if (Platform.OS !== 'android') return;
+    try {
+      MediaNotification.startTick(intervalMs);
+    } catch (error) {
+      handleErrorSilent(error, 'foreground-service', 'Failed to start sleep-timer tick');
+    }
+  }, []);
+
+  // Safe to call even if not currently ticking.
+  const stopTick = useCallback(() => {
+    if (Platform.OS !== 'android') return;
+    try {
+      MediaNotification.stopTick();
+    } catch (error) {
+      handleErrorSilent(error, 'foreground-service', 'Failed to stop sleep-timer tick');
+    }
+  }, []);
+
   return {
     startService,
     stopService,
     updateMetadata,
+    startTick,
+    stopTick,
     isInitialized: isInitialized.current,
   };
 };

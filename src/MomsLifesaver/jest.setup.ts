@@ -115,6 +115,14 @@ installAudioContext();
  */
 (globalThis as unknown as { __DEV__: boolean }).__DEV__ = true;
 
+// AsyncStorage ships no auto-mock for the jsdom ("web") project, and importing
+// the real module pulls native code babel-jest will not transform. Swap in the
+// package's official in-memory mock so preferences persistence runs headless.
+// (The "native" jest-expo project resolves its own mock.)
+jest.mock('@react-native-async-storage/async-storage', () =>
+  require('@react-native-async-storage/async-storage/jest/async-storage-mock'),
+);
+
 // jsdom's HTMLAudioElement.play is not implemented. Stub it.
 if (typeof HTMLMediaElement !== 'undefined') {
   HTMLMediaElement.prototype.play = jest.fn(async () => {

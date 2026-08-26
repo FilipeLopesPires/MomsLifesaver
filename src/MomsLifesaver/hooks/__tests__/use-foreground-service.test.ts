@@ -31,6 +31,8 @@ jest.mock('@/modules/media-notification', () => ({
     start: jest.fn(),
     update: jest.fn(),
     stop: jest.fn(),
+    startTick: jest.fn(),
+    stopTick: jest.fn(),
     addListener: jest.fn(() => ({ remove: jest.fn() })),
   },
 }));
@@ -58,6 +60,8 @@ const mockedModule = MediaNotification as unknown as {
   start: jest.Mock;
   update: jest.Mock;
   stop: jest.Mock;
+  startTick: jest.Mock;
+  stopTick: jest.Mock;
   addListener: jest.Mock;
 };
 
@@ -90,7 +94,7 @@ const mountWithoutSetup = (cb = callbacks()) => {
 const listenerFor = (event: string) => {
   const entry = mockedModule.addListener.mock.calls.find(([name]) => name === event);
   expect(entry).toBeDefined();
-  return entry![1] as (payload: { playWhenReady: boolean }) => void;
+  return entry![1] as (payload?: { playWhenReady: boolean }) => void;
 };
 
 beforeEach(() => {
@@ -114,11 +118,17 @@ describe('non-Android platforms', () => {
       await result.current.stopService();
       await result.current.updateMetadata('T', 'A', true);
     });
+    act(() => {
+      result.current.startTick(250);
+      result.current.stopTick();
+    });
 
     expect(mockedRequest).not.toHaveBeenCalled();
     expect(mockedModule.start).not.toHaveBeenCalled();
     expect(mockedModule.update).not.toHaveBeenCalled();
     expect(mockedModule.stop).not.toHaveBeenCalled();
+    expect(mockedModule.startTick).not.toHaveBeenCalled();
+    expect(mockedModule.stopTick).not.toHaveBeenCalled();
     expect(mockedModule.addListener).not.toHaveBeenCalled();
   });
 });
@@ -438,7 +448,22 @@ describe('remote-control events', () => {
     expect(() => act(() => listenerFor('onStop')({ playWhenReady: false }))).not.toThrow();
   });
 
-  it('removes both subscriptions on unmount', () => {
+  it('routes onSleepTimerTick to the caller', () => {
+    const onTick = jest.fn();
+    renderHook(() => useForegroundService({ ...callbacks(), onTick }));
+
+    act(() => listenerFor('onSleepTimerTick')());
+
+    expect(onTick).toHaveBeenCalledTimes(1);
+  });
+
+  it('tolerates a caller that supplies no onTick handler', () => {
+    renderHook(() => useForegroundService(callbacks()));
+
+    expect(() => act(() => listenerFor('onSleepTimerTick')())).not.toThrow();
+  });
+
+  it('removes all three subscriptions on unmount', () => {
     const removals: jest.Mock[] = [];
     mockedModule.addListener.mockImplementation(() => {
       const remove = jest.fn();
@@ -449,8 +474,26 @@ describe('remote-control events', () => {
     const view = mountWithoutSetup();
     view.view.unmount();
 
-    expect(removals).toHaveLength(2);
+    expect(removals).toHaveLength(3);
     removals.forEach((remove) => expect(remove).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe('startTick / stopTick', () => {
+  it('starts the native tick with the given interval', () => {
+    const { result } = renderHook(() => useForegroundService(callbacks()));
+
+    act(() => result.current.startTick(250));
+
+    expect(mockedModule.startTick).toHaveBeenCalledWith(250);
+  });
+
+  it('stops the native tick', () => {
+    const { result } = renderHook(() => useForegroundService(callbacks()));
+
+    act(() => result.current.stopTick());
+
+    expect(mockedModule.stopTick).toHaveBeenCalledTimes(1);
   });
 });
 

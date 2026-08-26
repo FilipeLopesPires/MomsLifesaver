@@ -701,3 +701,58 @@ describe('stopTrack', () => {
     expect(result.current.tracks['rain'].isPaused).toBe(false);
   });
 });
+
+describe('seeding from persisted preferences', () => {
+  const mountWithSeed = async (seed: Parameters<typeof useAudioController>[0]) => {
+    const view = renderHook(() => useAudioController(seed));
+    await waitFor(() => {
+      expect(Object.keys(view.result.current.tracks).length).toBeGreaterThan(0);
+    });
+    return view;
+  };
+
+  it('seeds per-track and master volume from the seed at load', async () => {
+    const { result } = await mountWithSeed({
+      masterVolume: 0.4,
+      trackVolumes: { rain: 0.2, heartbeat: 0.9 },
+    });
+
+    expect(result.current.globalVolume).toBe(0.4);
+    expect(result.current.tracks['rain'].volume).toBe(0.2);
+    expect(result.current.tracks['heartbeat'].volume).toBe(0.9);
+  });
+
+  it('falls back to defaultVolume for tracks not in the seed', async () => {
+    const { result } = await mountWithSeed({ trackVolumes: { rain: 0.2 } });
+
+    expect(result.current.tracks['rain'].volume).toBe(0.2);
+    for (const track of TRACK_LIBRARY.filter((t) => t.id !== 'rain')) {
+      expect(result.current.tracks[track.id].volume).toBe(track.defaultVolume);
+    }
+  });
+
+  it('falls back to master volume 1 when the seed omits it', async () => {
+    const { result } = await mountWithSeed({ trackVolumes: { rain: 0.2 } });
+    expect(result.current.globalVolume).toBe(1);
+  });
+
+  it('applies the seeded track volume (times master) when the track first plays', async () => {
+    const { result } = await mountWithSeed({ trackVolumes: { rain: 0.5 } });
+    const handle = getHandle('rain');
+
+    await act(async () => {
+      await result.current.toggleTrack('rain');
+    });
+
+    expect(handle.setVolumeAsync).toHaveBeenCalledWith(0.5);
+  });
+
+  it('treats an empty seed as all defaults', async () => {
+    const { result } = await mountWithSeed({});
+
+    expect(result.current.globalVolume).toBe(1);
+    for (const track of TRACK_LIBRARY) {
+      expect(result.current.tracks[track.id].volume).toBe(track.defaultVolume);
+    }
+  });
+});
