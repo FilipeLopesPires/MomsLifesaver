@@ -1,0 +1,40 @@
+# EAS Build upload excludes — MUST live at the git root, because EAS builds the
+# archive from the repository root and applies ignore rules from here (it does
+# NOT honor the nested src/MomsLifesaver/.gitignore). When this file exists, EAS
+# uses ONLY it (not .gitignore), so every large / regenerable / unneeded path
+# must be listed. Patterns without a leading slash match at ANY depth.
+
+# Node dependencies (reinstalled on the build server)
+node_modules/
+
+# The app's generated native projects (EAS regenerates them via prebuild).
+# Anchored with a leading slash so they match ONLY the app's own android/ios and
+# NOT the local Expo module's native source at modules/media-notification/android
+# (unanchored "android/" would exclude that too, dropping the MediaNotification
+# native module from the build).
+/src/MomsLifesaver/android/
+/src/MomsLifesaver/ios/
+
+# Build outputs, caches, intermediates (any depth — these hold no source, so it
+# is fine that this also matches modules/media-notification/android/build)
+build/
+.cxx/
+.gradle/
+.expo/
+dist/
+builds/
+coverage/
+
+# Repo extras not needed to build the app
+tools/
+docs/
+.git/
+.github/
+.claude/
+
+# Compiled artifacts & signing material
+*.apk
+*.aab
+*.keystore
+*.jks
+.DS_Store
