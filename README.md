@@ -28,6 +28,8 @@ The app is built with [Expo](https://expo.dev) and [React Native](https://reactn
 - **Master Volume Control**: Quickly adjust the overall volume of all playing tracks with a single slider
 - **Background Audio**: Audio continues playing when you switch apps or lock your device
 - **Smart Track Selection**: Select tracks with a tap, then control them all together with play/pause and stop buttons
+- **Saved Preferences**: Your track selection and volume levels are remembered and restored the next time you open the app
+- **Settings Screen**: Manage notification permissions, toggle background playback, and reset your saved preferences from an always-on settings button
 - **Cross-Platform**: Tested on Android and Web browsers
 
 ---
@@ -264,11 +266,11 @@ The application itself lives under `src/MomsLifesaver/`:
 
 ```
 src/MomsLifesaver/
-├── app/           # Expo Router screens (playlist, index, +not-found, _layout)
-├── components/    # UI components (track cards, playback bar, slider, ...)
+├── app/           # Expo Router screens (playlist, settings, index, +not-found, _layout)
+├── components/    # UI components (track cards, playback bar, slider, settings rows, ...)
 ├── constants/     # Theme colors, typography, track library metadata
-├── hooks/         # React hooks (audio controller, foreground service, media session, ...)
-├── services/      # Platform playback service, the expo-audio wrapper (native-sound), and the Web Audio wrapper (web-sound)
+├── hooks/         # React hooks (audio controller, preferences, foreground service, notification permission, media session, ...)
+├── services/      # Playback sound wrappers (native-sound / web-sound) and the persisted-preferences store (preferences-storage)
 ├── utils/         # Logger, error handler, helpers
 ├── types/         # Ambient TypeScript declarations for asset imports
 ├── assets/        # Images, icons, and audio files (each subfolder has its own README)
@@ -289,6 +291,7 @@ right file at build time based on the platform:
 | ------------------------------------- | ------------------------------ | -------------------------------- |
 | Sound wrapper (audio engine adapter)  | `services/native-sound.ts` (expo-audio / Media3) | `services/web-sound.ts` (HTMLAudioElement + Web Audio) |
 | Foreground service hook               | `hooks/use-foreground-service.ts`      | `hooks/use-foreground-service.web.ts` |
+| Notification permission hook          | `hooks/use-notification-permission.ts` (Android) | `hooks/use-notification-permission.web.ts` |
 | Media notification module             | `modules/media-notification/index.ts` (Android) | `modules/media-notification/index.web.ts` |
 
 Native audio runs on `expo-audio` (AndroidX Media3 on Android, AVAudioEngine on
@@ -324,6 +327,26 @@ bumping expo-audio, re-pin and check with
 
 iOS gets a no-op shim; `MPNowPlayingInfoCenter` support is separate follow-up
 work.
+
+### Preferences persistence
+
+User choices survive app restarts and web reloads. A `PreferencesProvider`
+(`hooks/use-preferences.ts`) hydrates a single versioned JSON blob from
+`services/preferences-storage.ts` before the first screen paints - the splash
+is held until then, so there is no flash of defaults - and seeds the selected
+tracks and volumes into `PlaylistScreen` / `useAudioController`. Writes are
+debounced and coalesced, and the master volume is persisted only from the
+user's slider drag, so the sleep timer's fade never writes a muted value.
+
+Storage is `@react-native-async-storage/async-storage` - a native key-value
+store on Android and `localStorage` on web - so no platform split is needed.
+Restored tracks are re-selected but left paused; the user presses play to
+resume.
+
+The Settings screen (`app/settings.tsx`, reached from the gear on the playlist
+screen) manages the notification permission
+(`hooks/use-notification-permission.ts`), toggles the Android foreground
+service, and resets all persisted state to defaults.
 
 ---
 

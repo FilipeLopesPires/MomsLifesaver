@@ -86,6 +86,16 @@ type ControllerState = {
   globalVolume: number;
 };
 
+/**
+ * Persisted values used to seed the initial load. Only the first load reads
+ * them; later changes flow through the setters. Absent fields fall back to
+ * each track's `defaultVolume` / a master volume of 1.
+ */
+type AudioSeed = {
+  masterVolume?: number;
+  trackVolumes?: Partial<Record<TrackId, number>>;
+};
+
 const INITIAL_STATE: ControllerState = {
   tracks: {},
   globalVolume: 1,
@@ -132,8 +142,14 @@ const computeStartPositionAsync = async (track: LoadedTrack): Promise<number> =>
   return parsed;
 };
 
-export const useAudioController = () => {
+export const useAudioController = (seed: AudioSeed = {}) => {
   const [state, setState] = useState<ControllerState>(INITIAL_STATE);
+  // Persisted seed read through a ref: the load effect runs once with an empty
+  // dep array, so it must read the latest seed rather than close over the value
+  // from first render. Assigned during render (not in an effect) so it is
+  // already current by the time the post-commit load effect runs.
+  const seedRef = useRef(seed);
+  seedRef.current = seed;
   // Every callback below reads live playback state through this ref instead
   // of closing over `state`, so their identities stay stable for the life of
   // the hook. Closing over state meant all eight were recreated on every
@@ -170,8 +186,9 @@ export const useAudioController = () => {
           TRACK_LIBRARY.map(async (track) => {
             try {
               log("[MomsLifesaver] Loading audio for track:", track.id);
+              const seededVolume = seedRef.current.trackVolumes?.[track.id] ?? track.defaultVolume;
               const { sound } = await createSoundAsync(track.audioModule, {
-                volume: track.defaultVolume,
+                volume: seededVolume,
                 isLooping: true,
                 shouldPlay: false,
                 debugLabel: track.id,
@@ -182,7 +199,7 @@ export const useAudioController = () => {
                 sound,
                 isPlaying: false,
                 isPaused: false,
-                volume: track.defaultVolume,
+                volume: seededVolume,
               }] as const;
               } catch (error) {
                 // A single track failing to load must not block the other
@@ -206,7 +223,7 @@ export const useAudioController = () => {
 
       setState({
         tracks: Object.fromEntries(entries) as ControllerState['tracks'],
-        globalVolume: 1,
+        globalVolume: seedRef.current.masterVolume ?? 1,
       });
       log("[MomsLifesaver] All tracks loaded successfully");
       } catch (error) {

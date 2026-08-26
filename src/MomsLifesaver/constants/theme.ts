@@ -18,6 +18,7 @@ export const Colors = {
   accentMuted: '#3F4F80',
   border: '#232B3D',
   borderActive: '#6C8CFF',
+  danger: '#E4708A',
 };
 
 export const Typography = {

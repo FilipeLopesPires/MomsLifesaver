@@ -40,6 +40,7 @@ const mockStopTrack = jest.fn().mockResolvedValue(undefined);
 const mockSetTrackVolume = jest.fn();
 const mockSetGlobalVolume = jest.fn();
 const mockToggleSelectedTracksPlayPause = jest.fn().mockResolvedValue(undefined);
+const mockPauseSelectedTracks = jest.fn().mockResolvedValue(undefined);
 
 jest.mock('@/hooks/use-audio-controller', () => ({
   useAudioController: () => ({
@@ -50,7 +51,42 @@ jest.mock('@/hooks/use-audio-controller', () => ({
     setTrackVolume: mockSetTrackVolume,
     setGlobalVolume: mockSetGlobalVolume,
     toggleSelectedTracksPlayPause: mockToggleSelectedTracksPlayPause,
+    pauseSelectedTracks: mockPauseSelectedTracks,
   }),
+}));
+
+// Router: capture navigation to the settings screen.
+const mockRouterPush = jest.fn();
+jest.mock('expo-router', () => ({
+  useRouter: () => ({ push: mockRouterPush }),
+}));
+
+jest.mock('@expo/vector-icons', () => {
+  const { Text } = require('react-native');
+  return { Ionicons: ({ name }: { name: string }) => <Text>{name}</Text> };
+});
+
+// Preferences: seeds, write-through, the foreground toggle, and the reset signal.
+const mockPersistSelection = jest.fn();
+const mockPersistTrackVolume = jest.fn();
+const mockPersistMasterVolume = jest.fn();
+const mockSetForegroundServiceEnabled = jest.fn();
+const mockResetPreferences = jest.fn().mockResolvedValue(undefined);
+const mockPreferences = {
+  hydrated: true,
+  getInitialSelection: () => [] as string[],
+  getSeed: () => ({ masterVolume: 1, trackVolumes: {} as Record<string, number> }),
+  initialForegroundServiceEnabled: true,
+  foregroundServiceEnabled: true,
+  setForegroundServiceEnabled: mockSetForegroundServiceEnabled,
+  persistSelection: mockPersistSelection,
+  persistTrackVolume: mockPersistTrackVolume,
+  persistMasterVolume: mockPersistMasterVolume,
+  resetPreferences: mockResetPreferences,
+  resetNonce: 0,
+};
+jest.mock('@/hooks/use-preferences', () => ({
+  usePreferences: () => mockPreferences,
 }));
 
 // Foreground service: capture the wiring + calls.
@@ -201,6 +237,10 @@ beforeEach(() => {
   mockForegroundCapture.onTogglePlayPause = null;
   mockWebMediaCapture.value = null;
   resetAudioState();
+  mockPreferences.foregroundServiceEnabled = true;
+  mockPreferences.getInitialSelection = () => [];
+  mockPreferences.getSeed = () => ({ masterVolume: 1, trackVolumes: {} });
+  mockPreferences.resetNonce = 0;
 });
 
 describe('PlaylistScreen initial render', () => {
@@ -490,5 +530,71 @@ describe('PlaylistScreen web media session integration', () => {
     expect(mockStopTrack).toHaveBeenCalledWith(FIRST_TRACK.id);
     expect(mockStopTrack).toHaveBeenCalledWith(SECOND_TRACK.id);
     expect(screen.getByTestId('footer-count').children[0]).toBe('0');
+  });
+});
+
+describe('PlaylistScreen settings entry', () => {
+  it('navigates to the settings screen when the gear is pressed', () => {
+    render(<PlaylistScreen />);
+    fireEvent.press(screen.getByTestId('settings-button'));
+    expect(mockRouterPush).toHaveBeenCalledWith('/settings');
+  });
+});
+
+describe('PlaylistScreen preferences persistence', () => {
+  it('seeds the selection from persisted preferences', () => {
+    mockPreferences.getInitialSelection = () => [FIRST_TRACK.id];
+    render(<PlaylistScreen />);
+    expect(screen.getByTestId('footer-count').children[0]).toBe('1');
+    expect(screen.getByTestId('grid-selected-ids').children[0]).toBe(FIRST_TRACK.id);
+  });
+
+  it('persists the selection when it changes', async () => {
+    render(<PlaylistScreen />);
+    mockPersistSelection.mockClear();
+    await pressTrack(FIRST_TRACK.id);
+    expect(mockPersistSelection).toHaveBeenCalledWith([FIRST_TRACK.id]);
+  });
+
+  it('persists per-track volume changes', () => {
+    render(<PlaylistScreen />);
+    fireEvent.press(screen.getByTestId(`grid-vol-${FIRST_TRACK.id}`));
+    expect(mockPersistTrackVolume).toHaveBeenCalledWith(FIRST_TRACK.id, 0.12);
+  });
+
+  it('persists master volume changes (the fade-excluding choke point)', () => {
+    render(<PlaylistScreen />);
+    fireEvent.press(screen.getByTestId('footer-volume-change'));
+    expect(mockPersistMasterVolume).toHaveBeenCalledWith(0.33);
+  });
+});
+
+describe('PlaylistScreen foreground-service gating', () => {
+  it('does not start the service when background audio is disabled', async () => {
+    mockPreferences.foregroundServiceEnabled = false;
+    render(<PlaylistScreen />);
+    await pressTrack(FIRST_TRACK.id);
+    expect(mockStartService).not.toHaveBeenCalled();
+  });
+
+  it('stops the service when background audio is turned off', () => {
+    mockPreferences.foregroundServiceEnabled = false;
+    render(<PlaylistScreen />);
+    expect(mockStopService).toHaveBeenCalled();
+  });
+});
+
+describe('PlaylistScreen reset signal', () => {
+  it('stops playback and restores default volumes when a reset is signalled', async () => {
+    mockPreferences.resetNonce = 1;
+    render(<PlaylistScreen />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockSetGlobalVolume).toHaveBeenCalledWith(1);
+    for (const track of TRACK_LIBRARY) {
+      expect(mockSetTrackVolume).toHaveBeenCalledWith(track.id, track.defaultVolume);
+    }
   });
 });

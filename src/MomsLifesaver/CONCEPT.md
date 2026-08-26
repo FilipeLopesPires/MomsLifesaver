@@ -14,7 +14,8 @@ system-level media controls.
 ## Principles
 
 - **Private by default** - everything runs locally on the device; no
-  network calls are made for playback.
+  network calls are made for playback, and saved preferences never leave
+  the device.
 - **Simple UI** - one screen, one job: pick tracks, mix volumes, press play.
 - **Reliable background playback** - audio continues when the app is
   backgrounded or the screen is locked.
@@ -37,4 +38,10 @@ system-level media controls.
   playback.
 - Deep-linkable start positions: tracks with interesting cue points (e.g.
   kalimba) begin from a random cue on each new play.
+- Persisted preferences: the selected tracks and their volumes (per-track and
+  master) are saved on-device and restored on the next launch (restored
+  paused, not auto-played).
+- A settings screen, reached from an always-on gear, to manage the Android
+  notification permission, toggle background playback, and reset saved
+  preferences to defaults.
 
