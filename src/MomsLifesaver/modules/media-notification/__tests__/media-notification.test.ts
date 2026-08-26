@@ -15,7 +15,15 @@ import IosModule from '@/modules/media-notification/index.ios';
 
 // Mirrors the `MediaNotificationNativeModule` declaration in index.ts plus the
 // EventEmitter surface the hook uses (`addListener`).
-const EXPECTED_SURFACE = ['addListener', 'removeAllListeners', 'start', 'stop', 'update'];
+const EXPECTED_SURFACE = [
+  'addListener',
+  'removeAllListeners',
+  'start',
+  'startTick',
+  'stop',
+  'stopTick',
+  'update',
+];
 
 const variants = [
   ['web', WebModule],
@@ -31,6 +39,8 @@ describe.each(variants)('%s media-notification shim', (_platform, module) => {
     expect(module.start('Rain', 'Playing', true)).toBeUndefined();
     expect(module.update('Rain', 'Paused', false)).toBeUndefined();
     expect(module.stop()).toBeUndefined();
+    expect(module.startTick(250)).toBeUndefined();
+    expect(module.stopTick()).toBeUndefined();
     expect(module.removeAllListeners('onTogglePlayPause')).toBeUndefined();
   });
 
@@ -44,6 +54,14 @@ describe.each(variants)('%s media-notification shim', (_platform, module) => {
   it('never invokes a registered listener (there is no session to press)', () => {
     const listener = jest.fn();
     module.addListener('onStop', listener);
+
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('never invokes an onSleepTimerTick listener (there is no native Handler to tick)', () => {
+    const listener = jest.fn();
+    module.addListener('onSleepTimerTick', listener);
+    module.startTick(250);
 
     expect(listener).not.toHaveBeenCalled();
   });

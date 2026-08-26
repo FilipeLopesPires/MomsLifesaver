@@ -28,7 +28,8 @@ The app is built with [Expo](https://expo.dev) and [React Native](https://reactn
 - **Master Volume Control**: Quickly adjust the overall volume of all playing tracks with a single slider
 - **Background Audio**: Audio continues playing when you switch apps or lock your device
 - **Smart Track Selection**: Select tracks with a tap, then control them all together with play/pause and stop buttons
-- **Saved Preferences**: Your track selection and volume levels are remembered and restored the next time you open the app
+- **Sleep Timer**: Set a countdown that gently fades the volume to silence over your chosen duration, then pauses playback - available on Web, Android, and iOS
+- **Saved Preferences**: Your track selection, volume levels, and sleep-timer duration are remembered and restored the next time you open the app
 - **Settings Screen**: Manage notification permissions, toggle background playback, and reset your saved preferences from an always-on settings button
 - **Cross-Platform**: Tested on Android and Web browsers
 
@@ -318,6 +319,19 @@ The invariant to protect: **exactly one AudioFocus requester in the process.**
 `adb logcat | grep -i audiofocus` should show only the expo-audio client. Do
 not add an `ExoPlayer`, `AudioAttributes` or `AudioManager` to `StubPlayer`.
 
+The same bridge also drives the sleep timer's background reliability. React
+Native stops dispatching JS `setInterval`/`setTimeout` callbacks the instant
+the host activity pauses (backgrounded app, locked screen), independent of
+this foreground service - a wake lock does not help, since RN itself refuses
+to run the timer while paused. `MediaNotificationBridge` runs a plain
+main-looper `Handler` loop (`startTicking`/`stopTicking`, driven by
+`MediaNotification.startTick`/`stopTick` from JS) that emits an
+`onSleepTimerTick` event on the same channel already used for play/pause/stop,
+which - unlike a JS timer - keeps firing while backgrounded. `hooks/use-sleep-timer.ts`
+stays platform-agnostic: it exposes an `advance()` function that this event
+drives, in addition to (not instead of) its own internal `setInterval`, which
+still handles the foregrounded case unchanged.
+
 `androidx.media3:media3-session` is pinned in
 `modules/media-notification/android/build.gradle` to the exact version
 expo-audio pulls for `media3-exoplayer` (currently `1.4.0`). Mixed media3
@@ -334,9 +348,10 @@ User choices survive app restarts and web reloads. A `PreferencesProvider`
 (`hooks/use-preferences.ts`) hydrates a single versioned JSON blob from
 `services/preferences-storage.ts` before the first screen paints - the splash
 is held until then, so there is no flash of defaults - and seeds the selected
-tracks and volumes into `PlaylistScreen` / `useAudioController`. Writes are
-debounced and coalesced, and the master volume is persisted only from the
-user's slider drag, so the sleep timer's fade never writes a muted value.
+tracks, volumes, and sleep-timer duration into `PlaylistScreen` /
+`useAudioController` / `useSleepTimer`. Writes are debounced and coalesced,
+and the master volume is persisted only from the user's slider drag, so the
+sleep timer's fade never writes a muted value.
 
 Storage is `@react-native-async-storage/async-storage` - a native key-value
 store on Android and `localStorage` on web - so no platform split is needed.
@@ -407,8 +422,9 @@ Found a bug or have a suggestion? Please [open an issue](https://github.com/Fili
 - [x] (P1) Global and individual volume adjustment
 - [x] (P1) Background audio playback
 - [ ] (P1) Smooth volume adjustment (instead of instant)
-- [ ] (P1) Playback timer with smooth fade-out
-- [ ] (P2) Persistence of user's last volumes and timer settings
+- [x] (P1) Playback timer with smooth fade-out
+- [x] (P2) Persistence of selected tracks and volumes
+- [x] (P2) Persistence of sleep-timer settings
 - [x] (P2) Lock screen app controls (Android)
 - [x] (P2) App notifications and top bar controls (Android)
 - [ ] (P3) Upgraded audio playlist

@@ -12,9 +12,15 @@
  * callbacks-in-a-ref shape of `hooks/use-foreground-service.ts`. The fade is
  * driven by a single `setInterval` computing elapsed time from `Date.now()`,
  * so a throttled/suspended interval (backgrounded tab, locked screen) still
- * resolves to the correct volume when it next fires.
+ * resolves to the correct volume when it next fires - except on Android,
+ * where React Native stops dispatching JS timers entirely once the host
+ * activity pauses. The optional `startBackgroundTicking`/`stopBackgroundTicking`
+ * callbacks and the exposed `advance()` function let a platform layer plug in
+ * a native tick source for that case (see `app/playlist.tsx` and
+ * `hooks/use-foreground-service.ts`) without this hook importing any
+ * react-native/expo APIs itself.
  *
- * v1 is wired up on Web only (see `app/playlist.tsx`); the hook itself is
+ * Wired up on all platforms (see `app/playlist.tsx`); the hook itself is
  * platform-agnostic and inert until `start()` is called.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -47,6 +53,15 @@ export type SleepTimerCallbacks = {
   setMasterVolume: (value: number) => void;
   /** Pause playback when the timer reaches zero. May be async. */
   onExpire: () => void | Promise<void>;
+  /**
+   * Optional native-backed tick source so the fade keeps advancing while the
+   * app is backgrounded (a JS `setInterval` alone stops firing once React
+   * Native pauses the host activity). Called with the fade's tick cadence in
+   * ms; the platform layer is expected to call the returned `advance()` on
+   * roughly that cadence in response.
+   */
+  startBackgroundTicking?: (intervalMs: number) => void;
+  stopBackgroundTicking?: () => void;
 };
 
 type SleepTimerState = {
@@ -63,8 +78,14 @@ const INITIAL_STATE: SleepTimerState = {
   remainingMs: 0,
 };
 
-export const useSleepTimer = (callbacks: SleepTimerCallbacks) => {
-  const [state, setState] = useState<SleepTimerState>(INITIAL_STATE);
+export const useSleepTimer = (
+  callbacks: SleepTimerCallbacks,
+  initialDurationSec?: number,
+) => {
+  const [state, setState] = useState<SleepTimerState>(() => ({
+    ...INITIAL_STATE,
+    durationSec: clampDurationSeconds(initialDurationSec ?? DEFAULT_DURATION_SEC),
+  }));
 
   // Live mirrors so the user-event callbacks below stay stable for the life of
   // the hook (same rationale as use-audio-controller): they only ever run long
@@ -82,6 +103,16 @@ export const useSleepTimer = (callbacks: SleepTimerCallbacks) => {
   // Fade bookkeeping, all in refs so the interval reads live values without
   // being re-created.
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Synchronous "is a fade in flight" flag, distinct from stateRef: stateRef
+  // only updates after a render + effect cycle, which lags behind. On
+  // Android, tick() can now be invoked from two independent sources (this
+  // hook's own setInterval, and a native background-tick event) that can
+  // both cross "reached zero" before either sees the other's finish() has
+  // already started - reading stateRef there let both calls run finish()
+  // concurrently, which could restore the pre-fade volume while the other
+  // call's pause was still in flight (an audible spike right at expiry).
+  // A plain ref write is synchronous and immediate, so it closes that race.
+  const isActiveRef = useRef(false);
   const anchorRef = useRef(0); // master volume captured at start
   const startedAtRef = useRef(0); // Date.now() at start
   const durationMsRef = useRef(0);
@@ -93,6 +124,7 @@ export const useSleepTimer = (callbacks: SleepTimerCallbacks) => {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
     }
+    callbacksRef.current.stopBackgroundTicking?.();
   }, []);
 
   // Reached zero: silence, pause, then restore the slider to the anchor. The
@@ -100,6 +132,13 @@ export const useSleepTimer = (callbacks: SleepTimerCallbacks) => {
   // silent - otherwise a resumed-at-anchor blip could leak before the pause
   // lands.
   const finish = useCallback(async () => {
+    // Re-entrancy guard: see isActiveRef's comment above. Flipped
+    // synchronously, before any await, so a second call arriving while this
+    // one is still in flight (e.g. the other tick source) bails out here.
+    if (!isActiveRef.current) {
+      return;
+    }
+    isActiveRef.current = false;
     clearTimer();
     const cb = callbacksRef.current;
     cb.setMasterVolume(0);
@@ -112,6 +151,15 @@ export const useSleepTimer = (callbacks: SleepTimerCallbacks) => {
   }, [clearTimer]);
 
   const tick = useCallback(() => {
+    // Guards against a stray/late external advance() call (e.g. a native tick
+    // arriving in a race just after stopBackgroundTicking was requested, or
+    // after finish()/cancel() already ran) dividing by a zero durationMsRef
+    // and writing NaN as the volume. isActiveRef (not stateRef - see its
+    // comment above) is what makes this check race-proof against two tick
+    // sources firing close together.
+    if (!isActiveRef.current) {
+      return;
+    }
     const durationMs = durationMsRef.current;
     const remaining = Math.max(0, durationMs - (Date.now() - startedAtRef.current));
     const target = clamp01((anchorRef.current * remaining) / durationMs);
@@ -143,6 +191,7 @@ export const useSleepTimer = (callbacks: SleepTimerCallbacks) => {
     durationMsRef.current = durationSec * 1000;
     lastWrittenVolumeRef.current = anchorRef.current;
     lastDisplaySecRef.current = durationSec;
+    isActiveRef.current = true;
     setState((previous) => ({
       ...previous,
       status: 'running',
@@ -150,11 +199,13 @@ export const useSleepTimer = (callbacks: SleepTimerCallbacks) => {
       remainingMs: durationSec * 1000,
     }));
     intervalRef.current = setInterval(tick, TICK_MS);
+    callbacksRef.current.startBackgroundTicking?.(TICK_MS);
   }, [clearTimer, tick]);
 
   // Abort a running fade and hand the master volume back to the user at its
   // pre-fade level. Playback keeps going.
   const cancel = useCallback(() => {
+    isActiveRef.current = false;
     clearTimer();
     callbacksRef.current.setMasterVolume(clamp01(anchorRef.current));
     setState((previous) => ({ ...previous, status: 'idle', remainingMs: 0 }));
@@ -201,5 +252,12 @@ export const useSleepTimer = (callbacks: SleepTimerCallbacks) => {
     start,
     cancel,
     reanchorMasterVolume,
+    /**
+     * Recomputes and applies the fade for the current instant. Identical to
+     * what an internal interval tick does - exposed so an external tick
+     * source (e.g. a native background-tick event) can drive the same fade
+     * math. Safe to call redundantly or while not running.
+     */
+    advance: tick,
   };
 };

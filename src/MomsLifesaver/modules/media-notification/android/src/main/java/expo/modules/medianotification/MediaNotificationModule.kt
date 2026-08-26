@@ -20,16 +20,25 @@ class MediaNotificationModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("MediaNotification")
 
-    Events(MediaNotificationBridge.EVENT_TOGGLE_PLAY_PAUSE, MediaNotificationBridge.EVENT_STOP)
+    Events(
+      MediaNotificationBridge.EVENT_TOGGLE_PLAY_PAUSE,
+      MediaNotificationBridge.EVENT_STOP,
+      MediaNotificationBridge.EVENT_TICK,
+    )
 
     OnCreate {
       MediaNotificationBridge.onRemoteCommand = { event, playWhenReady ->
         sendEvent(event, bundleOf("playWhenReady" to playWhenReady))
       }
+      MediaNotificationBridge.onTick = {
+        sendEvent(MediaNotificationBridge.EVENT_TICK, bundleOf())
+      }
     }
 
     OnDestroy {
       MediaNotificationBridge.onRemoteCommand = null
+      MediaNotificationBridge.onTick = null
+      MediaNotificationBridge.stopTicking()
     }
 
     Function("start") { title: String, artist: String, isPlaying: Boolean ->
@@ -51,6 +60,15 @@ class MediaNotificationModule : Module() {
     Function("stop") {
       context.stopService(serviceIntent())
       MediaNotificationBridge.reset()
+    }
+
+    // Sleep-timer background tick: see MediaNotificationBridge.startTicking.
+    Function("startTick") { intervalMs: Int ->
+      MediaNotificationBridge.startTicking(intervalMs.toLong())
+    }
+
+    Function("stopTick") {
+      MediaNotificationBridge.stopTicking()
     }
   }
 

@@ -19,6 +19,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { TRACK_MAP, type TrackId } from '@/constants/tracks';
+import { DEFAULT_DURATION_SEC, clampDurationSeconds } from '@/utils/duration';
 
 export const STORAGE_KEY = 'momslifesaver:preferences:v1';
 export const SCHEMA_VERSION = 1;
@@ -33,6 +34,8 @@ export type PreferencesV1 = {
   masterVolume: number;
   /** Whether the Android foreground service may run (background audio). */
   foregroundServiceEnabled: boolean;
+  /** Last-selected sleep-timer fade duration, in whole seconds. */
+  timerDurationSec: number;
 };
 
 /** A fresh defaults object. Callers own the result and may mutate it. */
@@ -42,6 +45,7 @@ export const defaultPreferences = (): PreferencesV1 => ({
   trackVolumes: {},
   masterVolume: 1,
   foregroundServiceEnabled: true,
+  timerDurationSec: DEFAULT_DURATION_SEC,
 });
 
 /** Frozen reference copy for comparisons; use `defaultPreferences()` for a mutable one. */
@@ -70,6 +74,11 @@ const normalizeSelection = (value: unknown): TrackId[] => {
   }
   return [...seen];
 };
+
+const normalizeDuration = (value: unknown): number =>
+  typeof value === 'number' && Number.isFinite(value)
+    ? clampDurationSeconds(value)
+    : DEFAULT_DURATION_SEC;
 
 const normalizeTrackVolumes = (value: unknown): Partial<Record<TrackId, number>> => {
   if (!isRecord(value)) return {};
@@ -129,6 +138,7 @@ export const parsePreferences = (raw: string | null): PreferencesV1 => {
       typeof record.foregroundServiceEnabled === 'boolean'
         ? record.foregroundServiceEnabled
         : DEFAULT_PREFERENCES.foregroundServiceEnabled,
+    timerDurationSec: normalizeDuration(record.timerDurationSec),
   };
 };
 

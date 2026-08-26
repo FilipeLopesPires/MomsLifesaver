@@ -21,6 +21,12 @@ export type MediaNotificationEventPayload = {
 export type MediaNotificationEvents = {
   onTogglePlayPause: (payload: MediaNotificationEventPayload) => void;
   onStop: (payload: MediaNotificationEventPayload) => void;
+  /**
+   * Fired on a native `Handler` cadence, not a JS timer - this is what lets
+   * the sleep-timer fade keep advancing while the app is backgrounded (React
+   * Native stops dispatching JS `setInterval` callbacks on host pause).
+   */
+  onSleepTimerTick: () => void;
 };
 
 declare class MediaNotificationNativeModule extends NativeModule<MediaNotificationEvents> {
@@ -33,6 +39,10 @@ declare class MediaNotificationNativeModule extends NativeModule<MediaNotificati
   update(title: string, artist: string, isPlaying: boolean): void;
   /** Stops the service and removes the notification. */
   stop(): void;
+  /** Starts (or re-cadences) periodic `onSleepTimerTick` events. */
+  startTick(intervalMs: number): void;
+  /** Stops the periodic tick. Safe to call even if not currently ticking. */
+  stopTick(): void;
 }
 
 export default requireNativeModule<MediaNotificationNativeModule>('MediaNotification');

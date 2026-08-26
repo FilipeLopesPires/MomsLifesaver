@@ -77,7 +77,7 @@ jest.mock('@/utils/logger', () => ({
   logWarn: jest.fn(),
 }));
 
-import { NativeSoundFactory } from '@/services/native-sound';
+import { NativeSoundFactory, NEAR_SILENT_VOLUME } from '@/services/native-sound';
 
 const flushMicrotasks = async () => {
   // Give any chained .then() handlers a chance to run before we assert.
@@ -141,6 +141,26 @@ describe('NativeSoundFactory.createAsync', () => {
     expect(stub.play).not.toHaveBeenCalled();
   });
 
+  it('nudges an initial volume of exactly 0 to NEAR_SILENT_VOLUME', async () => {
+    // Regression: expo-audio's native AudioPlayer.setVolume() treats a
+    // literal 0 on a non-muted player as "restore previousVolume" (which
+    // defaults to 1) instead of silencing it - a real 0 write jumps the
+    // player to full volume instead of silence. Writing a tiny non-zero
+    // value instead keeps the correct, instantaneous branch.
+    const stub = makePlayerStub();
+    mockCreateAudioPlayer.mockReturnValue(stub);
+
+    const pending = NativeSoundFactory.createAsync(123, {
+      volume: 0,
+      isLooping: false,
+      shouldPlay: false,
+    });
+    stub.__emit({ isLoaded: true });
+    await pending;
+
+    expect(stub.volume).toBe(NEAR_SILENT_VOLUME);
+  });
+
   it('calls play() only after load when shouldPlay is true', async () => {
     const stub = makePlayerStub();
     mockCreateAudioPlayer.mockReturnValue(stub);
@@ -181,6 +201,11 @@ describe('NativeSoundFactory.createAsync', () => {
 
     await sound.setVolumeAsync(0.25);
     expect(stub.volume).toBe(0.25);
+
+    // See the "nudges an initial volume of exactly 0" test above for why:
+    // a literal 0 write must not reach the native player as-is.
+    await sound.setVolumeAsync(0);
+    expect(stub.volume).toBe(NEAR_SILENT_VOLUME);
 
     await sound.setPositionAsync(5000);
     expect(stub.seekTo).toHaveBeenCalledWith(5);

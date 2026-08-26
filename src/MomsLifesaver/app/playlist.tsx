@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -15,6 +15,7 @@ import { useForegroundService } from '@/hooks/use-foreground-service';
 import { useWebMediaSession } from '@/hooks/use-web-media-session';
 import { useSleepTimer } from '@/hooks/use-sleep-timer';
 import { usePreferences } from '@/hooks/use-preferences';
+import { clampDurationSeconds } from '@/utils/duration';
 import { log } from '@/utils/logger';
 
 export default function PlaylistScreen() {
@@ -24,6 +25,8 @@ export default function PlaylistScreen() {
     persistSelection,
     persistTrackVolume,
     persistMasterVolume,
+    persistTimerDuration,
+    initialTimerDurationSec,
     foregroundServiceEnabled,
     resetNonce,
   } = preferences;
@@ -56,6 +59,10 @@ export default function PlaylistScreen() {
   // paused-metadata push so a restored (paused) selection at launch does not
   // trigger the POST_NOTIFICATIONS prompt before the user plays anything.
   const hasStartedServiceRef = useRef(false);
+  // Forward reference: useForegroundService (below) is called before
+  // useSleepTimer exists, but its onTick callback needs to reach
+  // sleepTimer.advance. Populated once the sleep timer is constructed.
+  const sleepTimerAdvanceRef = useRef<() => void>(() => {});
 
   // Keep refs up to date
   useEffect(() => {
@@ -111,9 +118,10 @@ export default function PlaylistScreen() {
   }, [stopTrack]);
 
   // Initialize foreground service (Android only)
-  const { startService, stopService, updateMetadata } = useForegroundService({
+  const { startService, stopService, updateMetadata, startTick, stopTick } = useForegroundService({
     onTogglePlayPause: handleForegroundToggle,
     onStop: handleStopAll,
+    onTick: () => sleepTimerAdvanceRef.current(),
   });
 
   // Check if any selected track is currently playing
@@ -261,13 +269,22 @@ export default function PlaylistScreen() {
   // Sleep timer: fades the master volume to silence over a chosen duration,
   // then pauses the selected tracks and restores the slider. `getMasterVolume`
   // reads the live value through a ref so the callbacks stay stable. Wired on
-  // Web only for v1 (see the footer below).
-  const sleepTimer = useSleepTimer({
-    getMasterVolume: () => globalVolumeRef.current,
-    setMasterVolume: setGlobalVolume,
-    onExpire: () => pauseSelectedTracks(selectedTrackIdsRef.current),
-  });
-  const { reanchorMasterVolume } = sleepTimer;
+  // all platforms (see the footer below).
+  const sleepTimer = useSleepTimer(
+    {
+      getMasterVolume: () => globalVolumeRef.current,
+      setMasterVolume: setGlobalVolume,
+      onExpire: () => pauseSelectedTracks(selectedTrackIdsRef.current),
+      startBackgroundTicking: startTick,
+      stopBackgroundTicking: stopTick,
+    },
+    initialTimerDurationSec,
+  );
+  const { reanchorMasterVolume, setDurationSec, advance } = sleepTimer;
+
+  useEffect(() => {
+    sleepTimerAdvanceRef.current = advance;
+  }, [advance]);
 
   // Route master-volume drags so a manual change during an active fade
   // re-anchors it, rather than being yanked back by the next fade tick. Only
@@ -280,6 +297,15 @@ export default function PlaylistScreen() {
       persistMasterVolume(value);
     },
     [setGlobalVolume, reanchorMasterVolume, persistMasterVolume],
+  );
+
+  // Persist the user's chosen fade duration so it survives an app restart.
+  const handleChangeDuration = useCallback(
+    (seconds: number) => {
+      setDurationSec(seconds);
+      persistTimerDuration(clampDurationSeconds(seconds));
+    },
+    [setDurationSec, persistTimerDuration],
   );
 
   // Reset preferences: stop playback and restore volumes/selection to defaults.
@@ -319,23 +345,25 @@ export default function PlaylistScreen() {
           volume={globalVolume}
           onVolumeChange={handleMasterVolumeChange}
         />
-        {Platform.OS === 'web' && (
-          <SleepTimerBar
-            enabled={sleepTimer.enabled}
-            status={sleepTimer.status}
-            durationSec={sleepTimer.durationSec}
-            remainingMs={sleepTimer.remainingMs}
-            canStart={isAnySelectedTrackPlaying}
-            onToggleEnabled={sleepTimer.setEnabled}
-            onChangeDuration={sleepTimer.setDurationSec}
-            onStart={sleepTimer.start}
-            onCancel={sleepTimer.cancel}
-          />
-        )}
+        <SleepTimerBar
+          enabled={sleepTimer.enabled}
+          status={sleepTimer.status}
+          durationSec={sleepTimer.durationSec}
+          remainingMs={sleepTimer.remainingMs}
+          canStart={isAnySelectedTrackPlaying}
+          onToggleEnabled={sleepTimer.setEnabled}
+          onChangeDuration={handleChangeDuration}
+          onStart={sleepTimer.start}
+          onCancel={sleepTimer.cancel}
+        />
       </View>
       <TouchableOpacity
         testID="settings-button"
-        style={[styles.settingsButton, { top: insets.top + 8 }]}
+        // insets.top + 18, plus the button's own 6px padding, lands the icon's
+        // actual top edge at insets.top + 24 - matching TrackGrid's
+        // contentContainer paddingTop (24), which is also the "Mom's
+        // Lifesaver" title's top margin.
+        style={[styles.settingsButton, { top: insets.top + 18 }]}
         onPress={() => router.push('/settings')}
         activeOpacity={0.7}
         accessibilityRole="button"
@@ -357,7 +385,11 @@ const styles = StyleSheet.create({
   },
   settingsButton: {
     position: 'absolute',
-    right: 16,
+    // The button's own 6px padding sits between this edge and the icon, so
+    // 14 here lands the icon's actual right edge at 20px from the screen
+    // edge - matching TrackGrid's contentContainer paddingHorizontal (20),
+    // which is also the "Mom's Lifesaver" title's left margin.
+    right: 14,
     zIndex: 10,
     padding: 6,
     borderRadius: 20,

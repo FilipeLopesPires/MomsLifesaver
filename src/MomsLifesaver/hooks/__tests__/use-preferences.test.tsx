@@ -30,6 +30,7 @@ jest.mock('@/services/preferences-storage', () => ({
     trackVolumes: {},
     masterVolume: 1,
     foregroundServiceEnabled: true,
+    timerDurationSec: 900,
   }),
   loadPreferences: jest.fn(),
   savePreferences: jest.fn(),
@@ -60,6 +61,7 @@ const snapshot = (overrides = {}) => ({
   trackVolumes: {},
   masterVolume: 1,
   foregroundServiceEnabled: true,
+  timerDurationSec: 900,
   ...overrides,
 });
 
@@ -132,6 +134,13 @@ describe('hydration', () => {
     expect(view.result.current.foregroundServiceEnabled).toBe(false);
   });
 
+  it('seeds the sleep-timer duration from storage', async () => {
+    mockLoad.mockResolvedValue(snapshot({ timerDurationSec: 1800 }));
+    const view = await mountHydrated();
+
+    expect(view.result.current.initialTimerDurationSec).toBe(1800);
+  });
+
   it('returns copies from the seed getters so callers cannot mutate the snapshot', async () => {
     mockLoad.mockResolvedValue(snapshot({ selectedTrackIds: ['rain'] }));
     const view = await mountHydrated();
@@ -159,6 +168,25 @@ describe('debounced writes', () => {
     expect(mockSave).toHaveBeenCalledTimes(1);
     expect(mockSave).toHaveBeenLastCalledWith(
       expect.objectContaining({ masterVolume: 0.2, trackVolumes: { rain: 0.3 } }),
+    );
+  });
+
+  it('coalesces rapid timer-duration writes into a single trailing flush', async () => {
+    const view = await mountHydrated();
+
+    act(() => {
+      view.result.current.persistTimerDuration(600);
+      view.result.current.persistTimerDuration(1200);
+    });
+    expect(mockSave).not.toHaveBeenCalled();
+
+    act(() => {
+      jest.advanceTimersByTime(300);
+    });
+
+    expect(mockSave).toHaveBeenCalledTimes(1);
+    expect(mockSave).toHaveBeenLastCalledWith(
+      expect.objectContaining({ timerDurationSec: 1200 }),
     );
   });
 

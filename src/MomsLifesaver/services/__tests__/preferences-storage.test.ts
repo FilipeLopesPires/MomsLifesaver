@@ -21,6 +21,7 @@ import {
   serializePreferences,
   type PreferencesV1,
 } from '@/services/preferences-storage';
+import { DEFAULT_DURATION_SEC, MAX_DURATION_SEC, MIN_DURATION_SEC } from '@/utils/duration';
 
 beforeEach(async () => {
   await AsyncStorage.clear();
@@ -33,6 +34,7 @@ const validBlob = (): PreferencesV1 => ({
   trackVolumes: { rain: 0.8, heartbeat: 0.5 },
   masterVolume: 0.4,
   foregroundServiceEnabled: false,
+  timerDurationSec: 1800,
 });
 
 describe('parsePreferences', () => {
@@ -146,6 +148,29 @@ describe('parsePreferences', () => {
       JSON.stringify({ version: SCHEMA_VERSION, foregroundServiceEnabled: false }),
     );
     expect(parsed.foregroundServiceEnabled).toBe(false);
+  });
+
+  it('clamps timerDurationSec into [MIN_DURATION_SEC, MAX_DURATION_SEC]', () => {
+    const tooLow = parsePreferences(
+      JSON.stringify({ version: SCHEMA_VERSION, timerDurationSec: 1 }),
+    );
+    expect(tooLow.timerDurationSec).toBe(MIN_DURATION_SEC);
+
+    const tooHigh = parsePreferences(
+      JSON.stringify({ version: SCHEMA_VERSION, timerDurationSec: 999999 }),
+    );
+    expect(tooHigh.timerDurationSec).toBe(MAX_DURATION_SEC);
+  });
+
+  it('defaults timerDurationSec when missing, non-numeric, or NaN', () => {
+    for (const bad of ['null', 'NaN', '"x"'] as const) {
+      const parsed = parsePreferences(
+        `{"version":${SCHEMA_VERSION},"timerDurationSec":${bad === 'NaN' ? 'null' : bad}}`,
+      );
+      expect(parsed.timerDurationSec).toBe(DEFAULT_DURATION_SEC);
+    }
+    const missing = parsePreferences(JSON.stringify({ version: SCHEMA_VERSION }));
+    expect(missing.timerDurationSec).toBe(DEFAULT_DURATION_SEC);
   });
 });
 

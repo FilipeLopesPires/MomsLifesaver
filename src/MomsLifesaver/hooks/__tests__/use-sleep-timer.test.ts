@@ -20,17 +20,25 @@ type Harness = {
     getMasterVolume: jest.Mock;
     setMasterVolume: jest.Mock;
     onExpire: jest.Mock;
+    startBackgroundTicking?: jest.Mock;
+    stopBackgroundTicking?: jest.Mock;
   };
 };
 
-const makeHarness = (initialVolume = 1): Harness => {
+const makeHarness = (initialVolume = 1, withBackgroundTicking = false): Harness => {
   const master = { value: initialVolume };
   const setMasterVolume = jest.fn((value: number) => {
     master.value = value;
   });
   const getMasterVolume = jest.fn(() => master.value);
   const onExpire = jest.fn(() => undefined);
-  return { master, callbacks: { getMasterVolume, setMasterVolume, onExpire } };
+  const backgroundTicking = withBackgroundTicking
+    ? { startBackgroundTicking: jest.fn(), stopBackgroundTicking: jest.fn() }
+    : {};
+  return {
+    master,
+    callbacks: { getMasterVolume, setMasterVolume, onExpire, ...backgroundTicking },
+  };
 };
 
 const writtenVolumes = (harness: Harness): number[] =>
@@ -54,6 +62,24 @@ describe('initial state', () => {
     expect(result.current.status).toBe('idle');
     expect(result.current.durationSec).toBe(DEFAULT_DURATION_SEC);
     expect(result.current.remainingMs).toBe(0);
+  });
+});
+
+describe('initialDurationSec seed', () => {
+  it('seeds durationSec from the provided initial value', () => {
+    const { callbacks } = makeHarness();
+    const { result } = renderHook(() => useSleepTimer(callbacks, 1800));
+
+    expect(result.current.durationSec).toBe(1800);
+  });
+
+  it('clamps an out-of-range seed into [10s, 8h]', () => {
+    const { callbacks } = makeHarness();
+    const low = renderHook(() => useSleepTimer(callbacks, 1));
+    expect(low.result.current.durationSec).toBe(MIN_DURATION_SEC);
+
+    const high = renderHook(() => useSleepTimer(callbacks, 999_999));
+    expect(high.result.current.durationSec).toBe(MAX_DURATION_SEC);
   });
 });
 
@@ -156,6 +182,40 @@ describe('running the fade', () => {
   });
 });
 
+describe('concurrent tick sources at expiry', () => {
+  it('guards against two near-simultaneous ticks both finishing the fade (no volume spike)', async () => {
+    const harness = makeHarness(1);
+    const { result } = renderHook(() => useSleepTimer(harness.callbacks));
+
+    act(() => result.current.setDurationSec(10));
+    act(() => result.current.start());
+    act(() => {
+      jest.setSystemTime(Date.now() + 10_000);
+    });
+
+    // Simulate the JS interval's tick and a near-simultaneous native tick
+    // both observing "reached zero" - exactly what can happen on Android now
+    // that two independent tick sources exist.
+    await act(async () => {
+      result.current.advance();
+      result.current.advance();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // onExpire (the pause) must only run once, regardless of how many tick
+    // sources observed expiry.
+    expect(harness.callbacks.onExpire).toHaveBeenCalledTimes(1);
+    // ...and the pre-fade volume must only be restored once. A second,
+    // uncoordinated finish() call would restore it again - the audible spike
+    // this guards against.
+    const restoreWrites = harness.callbacks.setMasterVolume.mock.calls.filter(
+      (call) => call[0] === 1,
+    );
+    expect(restoreWrites).toHaveLength(1);
+  });
+});
+
 describe('cancel', () => {
   it('stops the fade and restores the anchor while leaving playback alone', () => {
     const harness = makeHarness(1);
@@ -250,6 +310,99 @@ describe('reanchorMasterVolume', () => {
       act(() => result.current.reanchorMasterVolume(0.5));
     }).not.toThrow();
     expect(result.current.status).toBe('running');
+  });
+});
+
+describe('background ticking (native tick source)', () => {
+  it('starts background ticking with TICK_MS when the fade starts', () => {
+    const harness = makeHarness(1, true);
+    const { result } = renderHook(() => useSleepTimer(harness.callbacks));
+
+    act(() => result.current.setDurationSec(10));
+    act(() => result.current.start());
+
+    // start() also calls stopBackgroundTicking once first, as part of its
+    // double-start guard (clearTimer) - harmless, since native stopTicking()
+    // is a safe no-op when not currently ticking. What matters is that
+    // startBackgroundTicking is what actually leaves ticking running.
+    expect(harness.callbacks.startBackgroundTicking).toHaveBeenCalledWith(250);
+  });
+
+  it('stops background ticking on cancel', () => {
+    const harness = makeHarness(1, true);
+    const { result } = renderHook(() => useSleepTimer(harness.callbacks));
+
+    act(() => result.current.setDurationSec(10));
+    act(() => result.current.start());
+    act(() => result.current.cancel());
+
+    expect(harness.callbacks.stopBackgroundTicking).toHaveBeenCalled();
+  });
+
+  it('stops background ticking once the fade reaches expiry', async () => {
+    const harness = makeHarness(1, true);
+    const { result } = renderHook(() => useSleepTimer(harness.callbacks));
+
+    act(() => result.current.setDurationSec(10));
+    act(() => result.current.start());
+
+    await act(async () => {
+      jest.advanceTimersByTime(10_000);
+    });
+
+    expect(harness.callbacks.stopBackgroundTicking).toHaveBeenCalled();
+  });
+
+  it('stops background ticking on unmount', () => {
+    const harness = makeHarness(1, true);
+    const { result, unmount } = renderHook(() => useSleepTimer(harness.callbacks));
+
+    act(() => result.current.setDurationSec(10));
+    act(() => result.current.start());
+    unmount();
+
+    expect(harness.callbacks.stopBackgroundTicking).toHaveBeenCalled();
+  });
+
+  it('works unchanged when no background-ticking callbacks are provided', () => {
+    const harness = makeHarness(1, false);
+    const { result } = renderHook(() => useSleepTimer(harness.callbacks));
+
+    expect(() => {
+      act(() => result.current.setDurationSec(10));
+      act(() => result.current.start());
+      act(() => result.current.cancel());
+    }).not.toThrow();
+  });
+});
+
+describe('advance (external tick source)', () => {
+  it('is a safe no-op when the timer is not running', () => {
+    const harness = makeHarness(1);
+    const { result } = renderHook(() => useSleepTimer(harness.callbacks));
+
+    expect(() => act(() => result.current.advance())).not.toThrow();
+    expect(harness.callbacks.setMasterVolume).not.toHaveBeenCalled();
+  });
+
+  it('advances the fade identically to an internal tick, driven purely by calling it directly', () => {
+    const harness = makeHarness(1);
+    const { result } = renderHook(() => useSleepTimer(harness.callbacks));
+
+    act(() => result.current.setDurationSec(10));
+    act(() => result.current.start());
+
+    // Move the wall clock without ever letting the internal setInterval fire,
+    // so any progress here can only have come from calling advance() itself -
+    // proving it is a workable substitute for the internal tick.
+    act(() => {
+      jest.setSystemTime(2_000);
+    });
+    act(() => result.current.advance());
+
+    expect(result.current.remainingMs).toBe(8_000);
+    expect(harness.master.value).toBeCloseTo(0.8, 1);
+    expect(harness.master.value).toBeLessThan(1);
   });
 });
 

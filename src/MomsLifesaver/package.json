@@ -9,7 +9,7 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web --host lan",
-    "export:web": "expo export -p web --output-dir dist && rm -rf ../../docs && mkdir -p ../../docs && cp -r dist/. ../../docs/",
+    "export:web": "expo export -p web --output-dir dist && node ./scripts/copy-web-export.js",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
     "test": "jest",

@@ -58,6 +58,8 @@ export type PreferencesContextValue = {
   getInitialSelection: () => TrackId[];
   getSeed: () => PreferencesSeed;
   initialForegroundServiceEnabled: boolean;
+  /** Last-selected sleep-timer fade duration, in whole seconds, seeded once at mount. */
+  initialTimerDurationSec: number;
   /** Live app-wide toggle for the Android background-audio service. */
   foregroundServiceEnabled: boolean;
   setForegroundServiceEnabled: (value: boolean) => void;
@@ -65,6 +67,7 @@ export type PreferencesContextValue = {
   persistSelection: (ids: TrackId[]) => void;
   persistTrackVolume: (id: TrackId, volume: number) => void;
   persistMasterVolume: (volume: number) => void;
+  persistTimerDuration: (seconds: number) => void;
   /** Clear storage + restore defaults; bumps `resetNonce`. */
   resetPreferences: () => Promise<void>;
   /** Incremented on every reset so owners can react (stop playback, etc.). */
@@ -85,6 +88,7 @@ export const PreferencesProvider = ({ children }: { children: ReactNode }) => {
   const initialForegroundServiceEnabledRef = useRef(
     defaultPreferences().foregroundServiceEnabled,
   );
+  const initialTimerDurationSecRef = useRef(defaultPreferences().timerDurationSec);
 
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -124,6 +128,7 @@ export const PreferencesProvider = ({ children }: { children: ReactNode }) => {
       if (cancelled) return;
       snapshotRef.current = loaded;
       initialForegroundServiceEnabledRef.current = loaded.foregroundServiceEnabled;
+      initialTimerDurationSecRef.current = loaded.timerDurationSec;
       setForegroundServiceEnabledState(loaded.foregroundServiceEnabled);
       setHydrated(true);
       log('[Preferences] Hydrated from storage');
@@ -205,6 +210,14 @@ export const PreferencesProvider = ({ children }: { children: ReactNode }) => {
     [scheduleFlush],
   );
 
+  const persistTimerDuration = useCallback(
+    (seconds: number) => {
+      snapshotRef.current = { ...snapshotRef.current, timerDurationSec: seconds };
+      scheduleFlush();
+    },
+    [scheduleFlush],
+  );
+
   const setForegroundServiceEnabled = useCallback(
     (value: boolean) => {
       snapshotRef.current = { ...snapshotRef.current, foregroundServiceEnabled: value };
@@ -241,11 +254,13 @@ export const PreferencesProvider = ({ children }: { children: ReactNode }) => {
       getInitialSelection,
       getSeed,
       initialForegroundServiceEnabled: initialForegroundServiceEnabledRef.current,
+      initialTimerDurationSec: initialTimerDurationSecRef.current,
       foregroundServiceEnabled,
       setForegroundServiceEnabled,
       persistSelection,
       persistTrackVolume,
       persistMasterVolume,
+      persistTimerDuration,
       resetPreferences,
       resetNonce,
     }),
@@ -258,6 +273,7 @@ export const PreferencesProvider = ({ children }: { children: ReactNode }) => {
       persistSelection,
       persistTrackVolume,
       persistMasterVolume,
+      persistTimerDuration,
       resetPreferences,
       resetNonce,
     ],

@@ -70,6 +70,7 @@ jest.mock('@expo/vector-icons', () => {
 const mockPersistSelection = jest.fn();
 const mockPersistTrackVolume = jest.fn();
 const mockPersistMasterVolume = jest.fn();
+const mockPersistTimerDuration = jest.fn();
 const mockSetForegroundServiceEnabled = jest.fn();
 const mockResetPreferences = jest.fn().mockResolvedValue(undefined);
 const mockPreferences = {
@@ -77,11 +78,13 @@ const mockPreferences = {
   getInitialSelection: () => [] as string[],
   getSeed: () => ({ masterVolume: 1, trackVolumes: {} as Record<string, number> }),
   initialForegroundServiceEnabled: true,
+  initialTimerDurationSec: 900,
   foregroundServiceEnabled: true,
   setForegroundServiceEnabled: mockSetForegroundServiceEnabled,
   persistSelection: mockPersistSelection,
   persistTrackVolume: mockPersistTrackVolume,
   persistMasterVolume: mockPersistMasterVolume,
+  persistTimerDuration: mockPersistTimerDuration,
   resetPreferences: mockResetPreferences,
   resetNonce: 0,
 };
@@ -93,28 +96,37 @@ jest.mock('@/hooks/use-preferences', () => ({
 const mockStartService = jest.fn();
 const mockStopService = jest.fn();
 const mockUpdateMetadata = jest.fn();
+const mockStartTick = jest.fn();
+const mockStopTick = jest.fn();
 const mockForegroundCapture: {
   onTogglePlayPause: (() => void) | null;
   onStop: (() => void) | null;
+  onTick: (() => void) | null;
 } = {
   onTogglePlayPause: null,
   onStop: null,
+  onTick: null,
 };
 
 jest.mock('@/hooks/use-foreground-service', () => ({
   useForegroundService: ({
     onTogglePlayPause,
     onStop,
+    onTick,
   }: {
     onTogglePlayPause: () => void;
     onStop?: () => void;
+    onTick?: () => void;
   }) => {
     mockForegroundCapture.onTogglePlayPause = onTogglePlayPause;
     mockForegroundCapture.onStop = onStop ?? null;
+    mockForegroundCapture.onTick = onTick ?? null;
     return {
       startService: mockStartService,
       stopService: mockStopService,
       updateMetadata: mockUpdateMetadata,
+      startTick: mockStartTick,
+      stopTick: mockStopTick,
     };
   },
 }));
@@ -176,12 +188,24 @@ jest.mock('@/components/track-list-header', () => ({
   TrackListHeader: () => null,
 }));
 
-// SleepTimerBar is only mounted on web; stub it so we can assert the platform
-// gate without pulling in the real bar's internals.
+// SleepTimerBar stub: renders on every platform, and exposes onChangeDuration
+// via pressables so tests can assert playlist.tsx's persistence wrapper.
 jest.mock('@/components/sleep-timer-bar', () => {
-  const { View } = require('react-native');
+  const { Pressable, View } = require('react-native');
   return {
-    SleepTimerBar: () => <View testID="sleep-timer-bar" />,
+    SleepTimerBar: ({ onChangeDuration, onStart }: any) => (
+      <View testID="sleep-timer-bar">
+        <Pressable
+          testID="sleep-timer-duration-change"
+          onPress={() => onChangeDuration(1800)}
+        />
+        <Pressable
+          testID="sleep-timer-duration-change-overflow"
+          onPress={() => onChangeDuration(999999)}
+        />
+        <Pressable testID="sleep-timer-start" onPress={() => onStart()} />
+      </View>
+    ),
   };
 });
 
@@ -217,6 +241,7 @@ jest.mock('@/components/playback-controls-bar', () => {
 
 import { Platform } from 'react-native';
 import { TRACK_LIBRARY } from '@/constants/tracks';
+import { MAX_DURATION_SEC } from '@/utils/duration';
 import PlaylistScreen from '@/app/playlist';
 
 const FIRST_TRACK = TRACK_LIBRARY[0];
@@ -472,23 +497,58 @@ describe('PlaylistScreen foreground-service integration', () => {
   });
 });
 
-describe('PlaylistScreen sleep-timer platform gate', () => {
+describe('PlaylistScreen sleep-timer', () => {
   const setPlatform = (os: 'web' | 'ios' | 'android') => {
     Object.defineProperty(Platform, 'OS', { value: os, configurable: true });
   };
 
   afterEach(() => setPlatform('ios'));
 
-  it('mounts the sleep-timer bar on web', () => {
-    setPlatform('web');
+  it.each(['web', 'android', 'ios'] as const)(
+    'mounts the sleep-timer bar on %s',
+    (os) => {
+      setPlatform(os);
+      render(<PlaylistScreen />);
+      expect(screen.getByTestId('sleep-timer-bar')).toBeTruthy();
+    },
+  );
+
+  it('persists the chosen duration when it changes', () => {
     render(<PlaylistScreen />);
-    expect(screen.getByTestId('sleep-timer-bar')).toBeTruthy();
+    fireEvent.press(screen.getByTestId('sleep-timer-duration-change'));
+    expect(mockPersistTimerDuration).toHaveBeenCalledWith(1800);
   });
 
-  it('does not mount the sleep-timer bar on native', () => {
-    setPlatform('android');
+  it('clamps an out-of-range duration before persisting', () => {
     render(<PlaylistScreen />);
-    expect(screen.queryByTestId('sleep-timer-bar')).toBeNull();
+    fireEvent.press(screen.getByTestId('sleep-timer-duration-change-overflow'));
+    expect(mockPersistTimerDuration).toHaveBeenCalledWith(MAX_DURATION_SEC);
+  });
+
+  it('wires the foreground service onTick callback', () => {
+    render(<PlaylistScreen />);
+    expect(mockForegroundCapture.onTick).not.toBeNull();
+  });
+
+  it('routes the native background tick to the running fade', () => {
+    jest.useFakeTimers();
+    try {
+      render(<PlaylistScreen />);
+      fireEvent.press(screen.getByTestId('sleep-timer-start'));
+      mockSetGlobalVolume.mockClear();
+
+      // Move the wall clock WITHOUT firing the internal setInterval (no
+      // advanceTimersByTime), so a resulting write can only have come from
+      // the native-tick path (mockForegroundCapture.onTick).
+      act(() => {
+        jest.setSystemTime(Date.now() + 100_000);
+        mockForegroundCapture.onTick!();
+      });
+
+      expect(mockSetGlobalVolume).toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
 
