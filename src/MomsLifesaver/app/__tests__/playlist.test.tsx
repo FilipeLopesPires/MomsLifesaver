@@ -140,6 +140,15 @@ jest.mock('@/components/track-list-header', () => ({
   TrackListHeader: () => null,
 }));
 
+// SleepTimerBar is only mounted on web; stub it so we can assert the platform
+// gate without pulling in the real bar's internals.
+jest.mock('@/components/sleep-timer-bar', () => {
+  const { View } = require('react-native');
+  return {
+    SleepTimerBar: () => <View testID="sleep-timer-bar" />,
+  };
+});
+
 // PlaybackControlsBar stub: expose props as text and pressables so tests can
 // fire the global controls.
 jest.mock('@/components/playback-controls-bar', () => {
@@ -170,6 +179,7 @@ jest.mock('@/components/playback-controls-bar', () => {
   };
 });
 
+import { Platform } from 'react-native';
 import { TRACK_LIBRARY } from '@/constants/tracks';
 import PlaylistScreen from '@/app/playlist';
 
@@ -419,6 +429,26 @@ describe('PlaylistScreen foreground-service integration', () => {
     expect(mockForegroundCapture.onTogglePlayPause).not.toBeNull();
     mockForegroundCapture.onTogglePlayPause!();
     expect(mockToggleSelectedTracksPlayPause).not.toHaveBeenCalled();
+  });
+});
+
+describe('PlaylistScreen sleep-timer platform gate', () => {
+  const setPlatform = (os: 'web' | 'ios' | 'android') => {
+    Object.defineProperty(Platform, 'OS', { value: os, configurable: true });
+  };
+
+  afterEach(() => setPlatform('ios'));
+
+  it('mounts the sleep-timer bar on web', () => {
+    setPlatform('web');
+    render(<PlaylistScreen />);
+    expect(screen.getByTestId('sleep-timer-bar')).toBeTruthy();
+  });
+
+  it('does not mount the sleep-timer bar on native', () => {
+    setPlatform('android');
+    render(<PlaylistScreen />);
+    expect(screen.queryByTestId('sleep-timer-bar')).toBeNull();
   });
 });
 

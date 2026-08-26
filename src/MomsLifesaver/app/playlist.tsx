@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { TRACK_LIBRARY, TRACK_MAP, type TrackId, type TrackMetadata } from '@/constants/tracks';
@@ -7,27 +7,34 @@ import { Colors } from '@/constants/theme';
 import { TrackGrid } from '@/components/track-grid';
 import { TrackListHeader } from '@/components/track-list-header';
 import { PlaybackControlsBar } from '@/components/playback-controls-bar';
+import { SleepTimerBar } from '@/components/sleep-timer-bar';
 import { useAudioController } from '@/hooks/use-audio-controller';
 import { useForegroundService } from '@/hooks/use-foreground-service';
 import { useWebMediaSession } from '@/hooks/use-web-media-session';
+import { useSleepTimer } from '@/hooks/use-sleep-timer';
 import { log } from '@/utils/logger';
 
 export default function PlaylistScreen() {
   const [selectedTrackIds, setSelectedTrackIds] = useState<TrackId[]>([]);
-  const { toggleTrack, stopTrack, setGlobalVolume, globalVolume, setTrackVolume, tracks, toggleSelectedTracksPlayPause } = useAudioController();
-  
+  const { toggleTrack, stopTrack, setGlobalVolume, globalVolume, setTrackVolume, tracks, toggleSelectedTracksPlayPause, pauseSelectedTracks } = useAudioController();
+
   // Refs for stable foreground service callbacks
   const selectedTrackIdsRef = useRef<TrackId[]>(selectedTrackIds);
   const tracksRef = useRef(tracks);
-  
+  const globalVolumeRef = useRef(globalVolume);
+
   // Keep refs up to date
   useEffect(() => {
     selectedTrackIdsRef.current = selectedTrackIds;
   }, [selectedTrackIds]);
-  
+
   useEffect(() => {
     tracksRef.current = tracks;
   }, [tracks]);
+
+  useEffect(() => {
+    globalVolumeRef.current = globalVolume;
+  }, [globalVolume]);
 
   // Foreground service callbacks (handle notification button presses)
   const handleForegroundToggle = useCallback(() => {
@@ -174,6 +181,27 @@ export default function PlaylistScreen() {
     }
   }, [toggleSelectedTracksPlayPause]);
 
+  // Sleep timer: fades the master volume to silence over a chosen duration,
+  // then pauses the selected tracks and restores the slider. `getMasterVolume`
+  // reads the live value through a ref so the callbacks stay stable. Wired on
+  // Web only for v1 (see the footer below).
+  const sleepTimer = useSleepTimer({
+    getMasterVolume: () => globalVolumeRef.current,
+    setMasterVolume: setGlobalVolume,
+    onExpire: () => pauseSelectedTracks(selectedTrackIdsRef.current),
+  });
+  const { reanchorMasterVolume } = sleepTimer;
+
+  // Route master-volume drags so a manual change during an active fade
+  // re-anchors it, rather than being yanked back by the next fade tick.
+  const handleMasterVolumeChange = useCallback(
+    (value: number) => {
+      setGlobalVolume(value);
+      reanchorMasterVolume(value);
+    },
+    [setGlobalVolume, reanchorMasterVolume],
+  );
+
   return (
     <View style={styles.container}>
       <TrackGrid
@@ -186,15 +214,28 @@ export default function PlaylistScreen() {
         ListHeaderComponent={TrackListHeader}
       />
       <View style={[styles.footer, { paddingBottom: insets.bottom }]}>
-        <PlaybackControlsBar 
+        <PlaybackControlsBar
           selectedTracksCount={selectedTrackIds.length}
           selectedTrackNames={selectedTrackNames}
-          isPlaying={isAnySelectedTrackPlaying} 
+          isPlaying={isAnySelectedTrackPlaying}
           onToggle={handleGlobalPlayPause}
           onStop={handleStopAll}
           volume={globalVolume}
-          onVolumeChange={setGlobalVolume}
+          onVolumeChange={handleMasterVolumeChange}
         />
+        {Platform.OS === 'web' && (
+          <SleepTimerBar
+            enabled={sleepTimer.enabled}
+            status={sleepTimer.status}
+            durationSec={sleepTimer.durationSec}
+            remainingMs={sleepTimer.remainingMs}
+            canStart={isAnySelectedTrackPlaying}
+            onToggleEnabled={sleepTimer.setEnabled}
+            onChangeDuration={sleepTimer.setDurationSec}
+            onStart={sleepTimer.start}
+            onCancel={sleepTimer.cancel}
+          />
+        )}
       </View>
     </View>
   );
